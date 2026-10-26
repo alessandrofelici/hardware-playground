@@ -1,0 +1,8 @@
+build/
+# fw's "current app" -- per checkout, set with `fw use <app>`
+.fw-app
+# stock firmware downloaded by `fw stock`
+firmware/stock/
+*.part
+__pycache__/
+.venv/

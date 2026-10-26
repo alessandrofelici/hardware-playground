@@ -1,0 +1,92 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Compile Project",
+      "detail": "fw build: build the current app (both CPUs). The Pico extension's Compile button runs this.",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "build"],
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": "$gcc",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Run Project",
+      "detail": "fw run: build the current app, then flash it to the MAIN CPU. The Pico extension's Run button runs this.",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "run"],
+      "problemMatcher": "$gcc",
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "fw: switch app",
+      "detail": "Make another app current for Compile/Run",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "use", "${input:app}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "fw: list apps",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "list"],
+      "problemMatcher": []
+    },
+    {
+      "label": "fw: new app",
+      "detail": "Copy tools/app_template to apps/<name>/ and make it current",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "new-app", "${input:newApp}"],
+      "problemMatcher": []
+    },
+    {
+      "label": "fw: console (main CPU)",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "console", "main"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated" }
+    },
+    {
+      "label": "fw: console (display CPU)",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "console", "display"],
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "focus": true, "panel": "dedicated" }
+    },
+    {
+      "label": "fw: flash stock firmware",
+      "detail": "Download the latest stock FreeWili OG firmware, verify it and flash it",
+      "type": "shell",
+      "command": "python3",
+      "windows": { "command": "py" },
+      "args": ["${workspaceFolder}/tools/fw.py", "stock"],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "app",
+      "type": "pickString",
+      "description": "App to switch to",
+      "options": ["hello"]
+    },
+    {
+      "id": "newApp",
+      "type": "promptString",
+      "description": "New app name: lowercase letters, digits, underscores"
+    }
+  ]
+}
