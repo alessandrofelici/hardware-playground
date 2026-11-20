@@ -8,3 +8,6 @@ __pycache__/
 .venv/
 # Wi-Fi credentials for the Bottlenose ESP32-C6 sketch
 apps/bottlenose/c6/bottlenose_c6/secrets.h
+# Claude Code: agent worktrees and per-user settings
+.claude/worktrees/
+.claude/settings.local.json
