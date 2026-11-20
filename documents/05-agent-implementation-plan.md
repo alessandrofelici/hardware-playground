@@ -20,7 +20,7 @@ to ask.** Where a phase below says what to do on failure, it does that and conti
 |---|---|---|
 | 1 | Accept every *Assumed* item in [01 §3](01-spec-review.md#3-gaps-and-conflicts-and-how-they-were-resolved)? | **Yes**, they are confirmed. |
 | 2 | Flash without asking? | **Yes.** The board is plugged in and dedicated to this run. |
-| 3 | Install a host C compiler (MSYS2 gcc)? | **No.** Write the host tests, don't run them, and say so in the commit. |
+| 3 | Install a host C compiler (MSYS2 gcc)? | **No.** Write the host tests, don't run them, and say so in the commit. *(As it turned out, Strawberry Perl's gcc was already installed, so they ran.)* |
 | 4 | On failure (baseline build, header contract, merge conflict): stop or fix? | **Fix it** and continue. Record what was fixed in the commit message. |
 | 5 | End of run? | **Merge to `main` and clean up** worktrees and branches. **Do not push.** |
 | 6 | Commit the Root icons and generated arrays? | **Yes.** The repo is private. |

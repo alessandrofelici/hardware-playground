@@ -170,6 +170,6 @@ Actions fire on the **press** edge, so a turn switch is timestamped as early as 
 | A red tap flashes the LED-bar power countdown. | This is cosmetic and the bar restores itself. Documented in the README. |
 | Settings are lost at power-off. | Accepted for the MVP. Persistence is post-MVP (§3, G15). |
 | Icon licensing: Root artwork is © Leder Games. | Fine for personal firmware. Check whether the git remote is public before pushing the PNGs or the generated arrays. |
-| This machine has no host C compiler, so the pure-logic tests cannot run on the PC. | Core logic is kept SDK-free anyway. The tests are written but not run in the MVP, and nothing gets installed (user decision, 2026-11-20). MSYS2 gcc at `C:/msys64/mingw64/bin/gcc.exe`, the path the BSP expects, would let them run later. |
+| Host tests need a host C compiler, and MSYS2 gcc (the BSP's expected path) is absent. | **Resolved during the build:** Strawberry Perl's MinGW gcc 13.2 was already installed at `C:/Strawberry/c/bin/gcc.exe`, and the core host tests run with it (6/6 pass). Nothing was installed. The command is in `apps/rootclock/README.md`. |
 | One physical board shared by several agents. | Only the lead agent flashes, and only with the user's go-ahead ([05](05-agent-implementation-plan.md)). |
 | A display-only UF2 copy would brick the display CPU. | Only `fw run rootclock` / `fw flash rootclock` is used, and they flash main only. |

@@ -278,6 +278,8 @@ stateDiagram-v2
    set, because overflow is added into the last slot.
 3. Exactly one Stopwatch runs in RUNNING. None runs in READY, PAUSED, SETTINGS or OVER.
 4. The nickname ids across the 4 seats are always a permutation of {0, 1, 2, 3}.
-5. The alarm fires at most once per turn, and only while RUNNING.
+5. The alarm fires only while RUNNING, and at most once per turn for a given limit. Raising
+   the limit in settings above the current turn's time re-arms it (`rc_alarm_sync`), so the
+   turn beeps again when it crosses the new limit.
 6. SWITCH to the already-active seat changes nothing.
 7. A result contains only seats with `count ≥ 1`, in seat order.
