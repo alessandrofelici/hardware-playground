@@ -1,13 +1,14 @@
-# 04 — Future integration: sending results through the ESP32 to a mobile app
+# 04 — Future integration: sending results through the ESP32 to the app
 
-**Status: design only. None of this is in the MVP.** This page fixes two things now so that
-neither the firmware nor the mobile app has to guess later:
+**Status: design only on the firmware side. None of this is in the MVP.** This page fixes
+three things so that neither the firmware nor the app has to guess later:
 
 - **the payload contract** (§2), which the MVP already produces on the USB console when a game
   ends (verification hook, [02](02-mvp.md));
-- **where each hop lives** (§1), so the MVP's object model has a place to plug the export in.
-
-Transport details beyond that are deliberately left open.
+- **where each hop lives** (§1), so the MVP's object model has a place to plug the export in;
+- **the transport: Wi-Fi HTTP POST** to the root-metrics server (§1, Hop 3). Decided
+  2026-11-20, because the receiving app is a web server on the local network, not a phone
+  app.
 
 Requirement covered: R-EXP-1 (send each player's nickname, faction, total time, and an array
 of per-turn times after the game) and R-EXP-2 ([01](01-spec-review.md)).
@@ -23,9 +24,11 @@ flowchart LR
         M -- "0x51 ACK, 0x52 UPLINK_STATUS" --> D
     end
     C6["Bottlenose ESP32-C6"]
-    P["Mobile app"]
+    S["root-metrics server<br/>Docker, SQLite"]
+    P["Phones<br/>web browser"]
     M -- "UART1 115200, RESULT lines" --> C6
-    C6 -- "BLE or Wi-Fi (TBD)" --> P
+    C6 -- "Wi-Fi: HTTP POST /api/results" --> S
+    P -- "http://host:8080" --> S
 ```
 
 ```mermaid
@@ -33,7 +36,7 @@ sequenceDiagram
     participant D as Display CPU
     participant M as Main CPU
     participant C as ESP32-C6
-    participant P as Phone app
+    participant S as root-metrics server
     D->>D: game over, rc_result_to_json()
     loop each chunk of at most 1 KB
         D->>M: link 0x50 RESULT_CHUNK(seq, data)
@@ -44,8 +47,8 @@ sequenceDiagram
         M->>C: RESULT DATA seq slice
     end
     M->>C: RESULT END id
-    C->>P: deliver (transport TBD)
-    P-->>C: ack
+    C->>S: POST /api/results (contract v1 JSON)
+    S-->>C: 201 stored, or 200 duplicate
     C-->>M: RESULT OK id
     M-->>D: link 0x52 UPLINK_STATUS(delivered)
 ```
@@ -86,25 +89,60 @@ no spaces or newlines.
 | `RESULT BEGIN <game_id> <bytes> <crc32hex>` | OG → C6 | start of one result |
 | `RESULT DATA <seq> <≤56 chars>` | OG → C6 | one slice of the JSON |
 | `RESULT END <game_id>` | OG → C6 | complete; the C6 checks length and CRC |
-| `RESULT OK <game_id>` | C6 → OG | delivered to the phone |
-| `RESULT QUEUED <game_id>` | C6 → OG | stored on the C6, phone not connected yet |
-| `RESULT ERR <game_id> <reason>` | C6 → OG | rejected; the OG may retry |
+| `RESULT OK <game_id>` | C6 → OG | the server stored it (HTTP 201) or already had it (HTTP 200) |
+| `RESULT QUEUED <game_id>` | C6 → OG | held on the C6 because the server or Wi-Fi is unreachable; the C6 keeps retrying |
+| `RESULT ERR <game_id> <reason>` | C6 → OG | the C6 rejected it (bad length or CRC: the OG resends), or the server returned 400 (`<reason>` = `400`: do not resend) |
 
-### Hop 3: ESP32-C6 → phone (transport TBD)
+### Hop 3: ESP32-C6 → root-metrics server, over Wi-Fi HTTP POST (chosen)
 
-| Option | For | Against |
+The receiver is **root-metrics** (repository `alessandrofelici/root-metrics`). It is a
+TypeScript/Hono web app with SQLite, running in Docker on a host computer on the local
+network. Phones read results in a browser at `http://<host>:8080`, so nothing has to be sent
+to a phone directly.
+
+**The request**
+
+| | |
+|---|---|
+| Method and URL | `POST http://<host>:8080/api/results` |
+| Headers | `Content-Type: application/json` |
+| Body | One contract-v1 result (§2), exactly as the OG produced it: compact, about 6 KB at most |
+| Security | **Plain HTTP and no authentication.** The bottlenose sketch has no TLS (HTTPS would need `WiFiClientSecure`), and the network is the user's own. A shared-token header can be added later as an additive change. |
+
+**The responses**
+
+| Status | Body | Meaning for the C6 |
 |---|---|---|
-| **BLE GATT** (recommended to evaluate first) | Works at the game table with no network; the C6 has BLE 5; the phone connects directly. | Needs pairing and discovery UX in the app; chunked notifications. |
-| Wi-Fi HTTP POST | Simple on both ends; proven by the bottlenose demo. | Needs a 2.4 GHz network and a reachable receiver (server, or a phone on the same LAN). |
-| C6 soft-AP, phone pulls | No infrastructure. | The phone must switch Wi-Fi networks, which is clumsy on iOS and Android. |
+| `201 Created` | `{"status":"stored","game_id":"…"}` | Success. Reply `RESULT OK`. |
+| `200 OK` | `{"status":"duplicate","game_id":"…"}` | Already stored, also a success. Reply `RESULT OK`. |
+| `400 Bad Request` | `{"error":"<parser message>"}` | The payload is invalid. Reply `RESULT ERR <id> 400` and **do not retry**. |
+| `5xx`, timeout, or no Wi-Fi | — | Reply `RESULT QUEUED`, then retry with backoff (5 s, 15 s, 60 s, then every 5 min) while the board is on. |
 
-Delivery is **at least once**. The OG retries until `RESULT OK`, so the app must de-duplicate
-by `game_id`. The last result stays in display RAM until delivered or until a new game
-starts. Persisting it across power-off is post-MVP, like settings persistence.
+**C6 configuration.** `RESULTS_URL` goes in `secrets.h`, next to `WIFI_SSID` and
+`WIFI_PASS` (git-ignored). The host's address should be fixed, by a DHCP reservation or a
+static IP. The C6 only sees 2.4 GHz networks.
+
+**Why HTTP.** The receiver is a LAN web server. Bluetooth (BLE) would need a radio bridge
+into the Docker container, and a C6 soft access point would force the host off its network.
+HTTP is also what the bottlenose sketch already does successfully.
+
+**Development path without the ESP32.** A host-side script reads `RESULT {json}` lines from
+the display CPU's USB console and POSTs them to the same endpoint:
+- the display CPU is VID 093C, PID 2055, opened at **115200**;
+- **never 1200**, which reboots the CPU into BOOTSEL.
+
+This exercises the server end to end with real device output while the export firmware is
+not yet built. It runs on the host, not in the container, because Docker on Windows cannot
+pass a COM port through.
+
+Delivery is **at least once**. The OG and the C6 retry until `RESULT OK`, so the server must
+treat `game_id` as idempotent (the `200 duplicate` response). The last result stays in
+display RAM until delivered or until a new game starts, and in C6 RAM while it is queued.
+Persisting it across power-off is post-MVP, like settings persistence.
 
 ## 2. Payload contract v1
 
-This is the only definition of the data the phone receives.
+This is the only definition of the data the app receives.
 [06-mobile-app-starter-spec.md](06-mobile-app-starter-spec.md) copies it verbatim. Any
 change bumps `schema_version`.
 
@@ -236,13 +274,16 @@ chunks and about 85 UART lines, well under 1 s at 115200.
 | `display/` | `ExportLink`: start after GAME OVER (automatically, or with a button TBD), send chunks without blocking, show the uplink state in the S1 hint row. |
 | `common/rc_link.h` | The 0x50–0x52 type numbers and the timeout send, shared by both halves (the bottlenose pattern). |
 | `main/` | `OrcaBridge`: a UART1 driver (copy bottlenose's IRQ ring and line assembly), reassemble chunks, emit `RESULT` lines, parse replies, keep `board_watchdog_kick()` in every loop. |
-| `c6/` | Extend the bottlenose sketch: buffer `RESULT` lines, check the CRC, deliver over the chosen transport, reply `OK`/`QUEUED`/`ERR`. |
+| `c6/` | Extend the bottlenose sketch: buffer `RESULT` lines, check length and CRC, `HTTP POST` the JSON to `RESULTS_URL` with the retry schedule above, and reply `OK`/`QUEUED`/`ERR`. |
 | `core/` | Nothing: `GameResult` and `ResultSerializer` already exist in the MVP. |
 
-## 4. The mobile app (minor details; the starter brief is [06](06-mobile-app-starter-spec.md))
+## 4. The receiving app: root-metrics (the original starter brief is [06](06-mobile-app-starter-spec.md))
 
-- Receives contract-v1 results, stores them locally and de-duplicates by `game_id`.
-- Game list: date, player count, global time.
+- `POST /api/results` (Hop 3) stores contract-v1 results in SQLite and de-duplicates by
+  `game_id`.
+- Because the MVP always sends `ended_at: null`, the server records its own `received_at`
+  and sorts by it.
+- Game list: date (`ended_at`, otherwise `received_at`), player count, global time.
 - Game detail: per player, the nickname, faction, total, and per-turn times as a list or bar
   chart, with the limit line drawn if `turn_limit_ms` is set.
 - Per-nickname history across games (the four names make a natural leaderboard).
