@@ -15,6 +15,10 @@ Read them in order:
 | 05 | [Agent implementation plan](05-agent-implementation-plan.md) | Securing `main`, the feature branch, worktrees and subagents, gates, and stop-and-ask points |
 | 06 | [Mobile app starter brief](06-mobile-app-starter-spec.md) | A self-contained hand-off for an agent in another repo, with the contract and fixtures |
 
+[`fixtures/fixture-c-device-4p.json`](fixtures/fixture-c-device-4p.json) is a real 4-player
+result captured from the board on 2026-11-20. It is compact contract-v1 output, as emitted,
+for the app's parser tests.
+
 Decisions the user made while this was being planned:
 
 - the pause-menu button scheme;

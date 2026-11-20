@@ -84,6 +84,30 @@ Checks that need a person, after a run:
 - [ ] Holding red 6 s powers off. Holding gray powers back on to READY with default settings
       (AT-15).
 
+## Host tests
+
+`core/` is plain C11, so its tests run on the PC. On this machine Strawberry Perl's MinGW
+gcc works (from Git Bash):
+
+```
+export PATH="/c/Strawberry/c/bin:$PATH"
+cmake -S apps/rootclock/tests -B build/rootclock-tests -G Ninja \
+      -DCMAKE_C_COMPILER=C:/Strawberry/c/bin/gcc.exe
+cmake --build build/rootclock-tests && ctest --test-dir build/rootclock-tests
+```
+
+## Where it differs from documents/02
+
+These are small layout choices made so that everything fits at 320 px:
+
+- **PAUSED hint row** is drawn at text scale 1. Its three labels don't fit at scale 2.
+- **"keep holding..."** row also shows a blue progress bar.
+- **S2 selected row** has the `>` marker against the left edge, so `>P2 <Lizard Cult>` fits in
+  17 columns.
+- **State badges** are filled colour pills rather than coloured text.
+- **Big-timer colon** is nudged right inside its own cell. The font's colon sits at the left
+  of the glyph.
+
 ## Layout
 
 | Path | What |
@@ -93,6 +117,6 @@ Checks that need a person, after a run:
 | `display/ui_*.c`, `beeper.c` | S1 and S2 screens, the big-digit renderer, the limit beep |
 | `display/assets/faction_icons.c` | **Generated** 96×96 RGB565 icons. Regenerate with `py apps/rootclock/tools/gen_faction_icons.py` |
 | `assets/factions/*.png` | Source icons (Root art © Leder Games; private repo) |
-| `tests/` | Host tests for `core/`. Needs a host C compiler, which this machine doesn't have yet. |
+| `tests/` | Host tests for `core/`: a standalone CMake project, no SDK (see below) |
 | `tools/hw_check.py` | Unattended hardware acceptance check |
 | `main/main.c` | Main CPU: watchdog kick and display update, nothing app-specific yet |
