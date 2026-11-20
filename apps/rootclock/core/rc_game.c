@@ -53,22 +53,32 @@ static rc_events_t rc_apply_ready(rc_game_t *g, rc_action_t a, uint32_t now_ms) 
     return RC_EVT_NONE;
 }
 
+/* End the active seat's turn and begin `seat`'s. No-op for an invalid seat
+ * or the active seat itself (G6). */
+static void rc_game_switch_to(rc_game_t *g, uint8_t seat, uint32_t now_ms) {
+    if (seat >= RC_SEATS || seat == g->active_seat) {
+        return;
+    }
+    rc_player_end_turn(&g->players[g->active_seat], now_ms);
+    rc_player_begin_turn(&g->players[seat], now_ms);
+    g->active_seat = seat;
+    rc_alarm_reset(&g->alarm);
+}
+
 static rc_events_t rc_apply_running(rc_game_t *g, rc_action_t a, uint32_t now_ms) {
     if (!rc_game_has_active(g)) {
         return RC_EVT_NONE;   /* unreachable by construction */
     }
     switch (a.kind) {
+    case RC_ACT_NEXT:
+        rc_game_switch_to(g, rc_game_next_seat(g, g->active_seat), now_ms);
+        break;
     case RC_ACT_SWITCH:
-        if (a.seat >= RC_SEATS || a.seat == g->active_seat) {
-            break;   /* invalid seat, or own button: changes nothing (G6) */
-        }
-        rc_player_end_turn(&g->players[g->active_seat], now_ms);
-        rc_player_begin_turn(&g->players[a.seat], now_ms);
-        g->active_seat = a.seat;
-        rc_alarm_reset(&g->alarm);
+        rc_game_switch_to(g, a.seat, now_ms);
         break;
     case RC_ACT_PAUSE:
         rc_player_pause(&g->players[g->active_seat], now_ms);
+        g->viewed_seat = g->active_seat;
         g->state = RC_STATE_PAUSED;
         break;
     default:
@@ -83,8 +93,13 @@ static rc_events_t rc_apply_paused(rc_game_t *g, rc_action_t a, uint32_t now_ms)
     }
     switch (a.kind) {
     case RC_ACT_RESUME:
+        /* The paused turn continues, whichever card was being viewed. */
         rc_player_resume(&g->players[g->active_seat], now_ms);
+        g->viewed_seat = g->active_seat;
         g->state = RC_STATE_RUNNING;
+        break;
+    case RC_ACT_VIEW_NEXT:
+        g->viewed_seat = rc_game_next_seat(g, g->viewed_seat);
         break;
     case RC_ACT_OPEN_SETTINGS:
         rc_game_open_settings(g);
@@ -133,6 +148,9 @@ static rc_events_t rc_apply_settings(rc_game_t *g, rc_action_t a, uint32_t now_m
 
 static rc_events_t rc_apply_over(rc_game_t *g, rc_action_t a) {
     switch (a.kind) {
+    case RC_ACT_VIEW_NEXT:
+        g->viewed_seat = rc_game_next_seat(g, g->viewed_seat);
+        break;
     case RC_ACT_VIEW:
         if (a.seat < RC_SEATS) {
             g->viewed_seat = a.seat;
@@ -187,19 +205,31 @@ uint32_t rc_game_global_ms(const rc_game_t *g, uint32_t now_ms) {
     return sum;
 }
 
+uint8_t rc_game_next_seat(const rc_game_t *g, uint8_t seat) {
+    const unsigned n = rc_settings_players(&g->settings);
+    return ((unsigned)seat + 1u >= n) ? 0u : (uint8_t)(seat + 1u);
+}
+
 uint8_t rc_game_shown_seat(const rc_game_t *g) {
     switch (g->state) {
     case RC_STATE_RUNNING:
-    case RC_STATE_PAUSED:
         return g->active_seat;
+    case RC_STATE_PAUSED:
     case RC_STATE_OVER:
-        return g->viewed_seat;
+        return (g->viewed_seat < RC_SEATS) ? g->viewed_seat : g->active_seat;
     case RC_STATE_SETTINGS:
-        return (g->return_state == RC_STATE_READY) ? 0u : g->active_seat;
+        if (g->return_state == RC_STATE_READY) {
+            return 0u;
+        }
+        return (g->viewed_seat < RC_SEATS) ? g->viewed_seat : g->active_seat;
     case RC_STATE_READY:
     default:
         return 0u;
     }
+}
+
+bool rc_game_avg_turn_ms(const rc_game_t *g, uint8_t seat, uint32_t *avg_ms) {
+    return (seat < RC_SEATS) && rc_player_avg_turn_ms(&g->players[seat], avg_ms);
 }
 
 bool rc_game_turn_over_limit(const rc_game_t *g, uint32_t now_ms) {

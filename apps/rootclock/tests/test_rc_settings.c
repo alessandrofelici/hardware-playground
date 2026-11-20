@@ -52,6 +52,7 @@ static void test_settings_defaults(void) {
     rc_settings_t s;
     memset(&s, 0xA5, sizeof s);
     rc_settings_defaults(&s);
+    ASSERT_EQ(s.players, 4u);
     ASSERT_EQ(s.limit_idx, 0u);
     ASSERT_EQ(rc_settings_limit_ms(&s), 0u);
     for (uint8_t i = 0u; i < RC_SEATS; i++) {
@@ -215,20 +216,22 @@ static void test_faction_cycle(void) {
 
 static void test_menu(void) {
     static const rc_row_kind_t kinds[RC_MENU_ROWS] = {
-        RC_ROW_LIMIT,
+        RC_ROW_PLAYERS, RC_ROW_LIMIT,
         RC_ROW_NICKNAME, RC_ROW_FACTION, RC_ROW_NICKNAME, RC_ROW_FACTION,
         RC_ROW_NICKNAME, RC_ROW_FACTION, RC_ROW_NICKNAME, RC_ROW_FACTION,
     };
     static const uint8_t seats[RC_MENU_ROWS] = {
-        RC_NO_SEAT, 0u, 0u, 1u, 1u, 2u, 2u, 3u, 3u,
+        RC_NO_SEAT, RC_NO_SEAT, 0u, 0u, 1u, 1u, 2u, 2u, 3u, 3u,
     };
     rc_menu_t m;
     rc_settings_t s, before;
 
+    ASSERT_EQ(RC_MENU_ROWS, 10u);
     for (uint8_t r = 0u; r < RC_MENU_ROWS; r++) {
         ASSERT_EQ(rc_menu_row_kind(r), kinds[r]);
         ASSERT_EQ(rc_menu_row_seat(r), seats[r]);
     }
+    ASSERT_EQ(rc_menu_row_kind(RC_MENU_ROWS), RC_ROW_LIMIT);   /* seatless */
     ASSERT_EQ(rc_menu_row_seat(RC_MENU_ROWS), RC_NO_SEAT);
     ASSERT_EQ(rc_menu_row_seat(0xFFu), RC_NO_SEAT);
 
@@ -236,7 +239,7 @@ static void test_menu(void) {
     rc_menu_reset(&m);
     ASSERT_EQ(m.row, 0u);
     rc_menu_move(&m, -1);
-    ASSERT_EQ(m.row, 8u);
+    ASSERT_EQ(m.row, 9u);
     rc_menu_move(&m, +1);
     ASSERT_EQ(m.row, 0u);
     for (uint8_t i = 1u; i <= RC_MENU_ROWS; i++) {
@@ -248,29 +251,33 @@ static void test_menu(void) {
 
     rc_settings_defaults(&s);
 
-    /* AT-02: row 4 is P2's faction; Eyrie +4 = Lizard Cult. */
-    m.row = 4u;
+    /* AT-02: row 5 is P2's faction; Eyrie +4 = Lizard Cult. */
+    m.row = 5u;
     for (unsigned i = 0u; i < 4u; i++) {
         rc_menu_change(&m, &s, +1);
     }
     ASSERT_EQ(s.seat[1].faction_id, RC_FACTION_CULT);
 
-    /* AT-03: row 1 is P1's nickname; +1 swaps Jacob and Alex. */
-    m.row = 1u;
+    /* AT-03: row 2 is P1's nickname; +1 swaps Jacob and Alex. */
+    m.row = 2u;
     rc_menu_change(&m, &s, +1);
     ASSERT_EQ(s.seat[0].nickname_id, 1u);
     ASSERT_EQ(s.seat[1].nickname_id, 0u);
 
-    /* AT-04: row 0 is the limit; +1 = 0:30. */
-    m.row = 0u;
+    /* AT-04: row 1 is the limit; +1 = 0:30. Row 0 is PLAYERS; 4 +1 = 3. */
+    m.row = 1u;
     rc_menu_change(&m, &s, +1);
     ASSERT_EQ(rc_settings_limit_ms(&s), 30000u);
+    m.row = 0u;
+    rc_menu_change(&m, &s, +1);
+    ASSERT_EQ(rc_settings_players(&s), 3u);
+    ASSERT_EQ(rc_settings_limit_ms(&s), 30000u);   /* untouched */
 
-    /* Row 8 is P4's faction; row 7 P4's nickname. */
-    m.row = 8u;
+    /* Row 9 is P4's faction; row 8 P4's nickname. */
+    m.row = 9u;
     rc_menu_change(&m, &s, -1);
     ASSERT_EQ(s.seat[3].faction_id, RC_FACTION_WOODLAND);
-    m.row = 7u;
+    m.row = 8u;
     rc_menu_change(&m, &s, -1);
     ASSERT_EQ(s.seat[3].nickname_id, 2u);   /* Lorenzo -> Ahmed */
     ASSERT_EQ(s.seat[2].nickname_id, 3u);   /* swapped */
@@ -281,6 +288,34 @@ static void test_menu(void) {
     m.row = RC_MENU_ROWS;
     rc_menu_change(&m, &s, +1);
     ASSERT_TRUE(memcmp(&before, &s, sizeof s) == 0);
+}
+
+static void test_players(void) {
+    rc_settings_t s;
+
+    rc_settings_defaults(&s);
+    ASSERT_EQ(s.players, 4u);
+    ASSERT_EQ(rc_settings_players(&s), 4u);
+
+    /* 4 -> 3 -> 4 in both directions; dir is a sign; 0 is a no-op. */
+    rc_settings_cycle_players(&s, +1);
+    ASSERT_EQ(rc_settings_players(&s), 3u);
+    rc_settings_cycle_players(&s, +1);
+    ASSERT_EQ(rc_settings_players(&s), 4u);
+    rc_settings_cycle_players(&s, -1);
+    ASSERT_EQ(rc_settings_players(&s), 3u);
+    rc_settings_cycle_players(&s, -5);
+    ASSERT_EQ(rc_settings_players(&s), 4u);
+    rc_settings_cycle_players(&s, 0);
+    ASSERT_EQ(rc_settings_players(&s), 4u);
+
+    /* Corrupt values clamp into 3..4, and cycling recovers. */
+    s.players = 0u;
+    ASSERT_EQ(rc_settings_players(&s), 3u);
+    s.players = 200u;
+    ASSERT_EQ(rc_settings_players(&s), 4u);
+    rc_settings_cycle_players(&s, +1);
+    ASSERT_EQ(s.players, 3u);
 }
 
 static void test_alarm(void) {
@@ -337,6 +372,7 @@ int main(void) {
     test_nickname_swap();
     test_faction_cycle();
     test_menu();
+    test_players();
     test_alarm();
     TEST_RETURN();
 }

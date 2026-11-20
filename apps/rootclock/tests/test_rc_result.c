@@ -10,7 +10,7 @@
 static const char k_doc_example[] =
     "{\"schema\":\"rootclock.game_result\",\"schema_version\":1,"
     "\"game_id\":\"7f3a9c21e04b5d18\","
-    "\"device\":{\"app\":\"rootclock\",\"app_version\":\"001\"},"
+    "\"device\":{\"app\":\"rootclock\",\"app_version\":\"002\"},"
     "\"ended_at\":null,\"turn_limit_ms\":120000,\"global_ms\":666000,"
     "\"players\":["
     "{\"seat\":1,\"nickname\":\"Jacob\",\"faction\":\"marquise\","
@@ -66,6 +66,7 @@ static uint32_t play_doc_example(rc_game_t *g, unsigned *beeps) {
 
     rc_game_init(g);
     rc_t_apply(g, ACT(OPEN_SETTINGS), t);
+    rc_t_apply(g, ACT(MENU_DOWN), t);   /* row 0 is PLAYERS */
     for (unsigned i = 0u; i < 4u; i++) {
         rc_t_apply(g, ACT(MENU_NEXT), t);       /* Off -> 2:00 */
     }
@@ -175,7 +176,7 @@ static void test_skipped_seats_and_null_limit(void) {
     static const char expect[] =
         "{\"schema\":\"rootclock.game_result\",\"schema_version\":1,"
         "\"game_id\":\"0000000000000000\","
-        "\"device\":{\"app\":\"rootclock\",\"app_version\":\"001\"},"
+        "\"device\":{\"app\":\"rootclock\",\"app_version\":\"002\"},"
         "\"ended_at\":null,\"turn_limit_ms\":null,\"global_ms\":4000,"
         "\"players\":["
         "{\"seat\":1,\"nickname\":\"Jacob\",\"faction\":\"lilypad\","
@@ -186,6 +187,7 @@ static void test_skipped_seats_and_null_limit(void) {
 
     rc_game_init(&g);
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
+    rc_t_apply(&g, ACT(MENU_DOWN), t);   /* row 0 is PLAYERS */
     rc_t_apply(&g, ACT(MENU_DOWN), t);
     rc_t_apply(&g, ACT(MENU_DOWN), t);               /* row 2: P1 faction */
     rc_t_apply(&g, ACT(MENU_PREV), t);               /* Marquise -> Lilypad */
@@ -272,6 +274,7 @@ static void test_truncated_worst_case(void) {
 
     rc_game_init(&g);
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
+    rc_t_apply(&g, ACT(MENU_DOWN), t);   /* row 0 is PLAYERS */
     rc_t_apply(&g, ACT(MENU_PREV), t);                /* Off -> 15:00 */
     rc_t_apply(&g, ACT(MENU_DONE), t);
     rc_t_apply(&g, ACT(START), t);

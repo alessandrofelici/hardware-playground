@@ -15,6 +15,8 @@ static void set_limit(rc_game_t *g, uint8_t idx, uint32_t now) {
     rc_t_apply(g, ACT(OPEN_SETTINGS), now);
     ASSERT_EQ(g->state, RC_STATE_SETTINGS);
     ASSERT_EQ(g->menu.row, 0u);
+    rc_t_apply(g, ACT(MENU_DOWN), now);   /* row 0 is PLAYERS, row 1 LIMIT */
+    ASSERT_EQ(g->menu.row, 1u);
     for (unsigned i = 0u;
          i < RC_LIMIT_OPTION_COUNT && g->settings.limit_idx != idx; i++) {
         rc_t_apply(g, ACT(MENU_NEXT), now);
@@ -74,19 +76,19 @@ static bool is_valid(const rc_game_t *g, rc_action_t a) {
     case RC_STATE_READY:
         return a.kind == RC_ACT_START || a.kind == RC_ACT_OPEN_SETTINGS;
     case RC_STATE_RUNNING:
-        return a.kind == RC_ACT_PAUSE ||
+        return a.kind == RC_ACT_PAUSE || a.kind == RC_ACT_NEXT ||
                (a.kind == RC_ACT_SWITCH && a.seat < RC_SEATS &&
                 a.seat != g->active_seat);
     case RC_STATE_PAUSED:
         return a.kind == RC_ACT_RESUME || a.kind == RC_ACT_OPEN_SETTINGS ||
-               a.kind == RC_ACT_END_GAME;
+               a.kind == RC_ACT_END_GAME || a.kind == RC_ACT_VIEW_NEXT;
     case RC_STATE_SETTINGS:
         return a.kind == RC_ACT_MENU_UP || a.kind == RC_ACT_MENU_DOWN ||
                a.kind == RC_ACT_MENU_PREV || a.kind == RC_ACT_MENU_NEXT ||
                a.kind == RC_ACT_MENU_DONE;
     case RC_STATE_OVER:
         return (a.kind == RC_ACT_VIEW && a.seat < RC_SEATS) ||
-               a.kind == RC_ACT_NEW_GAME;
+               a.kind == RC_ACT_NEW_GAME || a.kind == RC_ACT_VIEW_NEXT;
     default:
         return false;
     }
@@ -204,21 +206,21 @@ static void test_transitions(void) {
     ASSERT_EQ(g.return_state, RC_STATE_PAUSED);
     ASSERT_EQ(g.menu.row, 0u);
 
-    /* Cursor: UP/DOWN wrap over 9 rows. */
+    /* Cursor: UP/DOWN wrap over 10 rows. */
     rc_t_apply(&g, ACT(MENU_DOWN), t);
     ASSERT_EQ(g.menu.row, 1u);
     rc_t_apply(&g, ACT(MENU_UP), t);
     ASSERT_EQ(g.menu.row, 0u);
     rc_t_apply(&g, ACT(MENU_UP), t);
-    ASSERT_EQ(g.menu.row, 8u);
+    ASSERT_EQ(g.menu.row, 9u);
     rc_t_apply(&g, ACT(MENU_DOWN), t);
     ASSERT_EQ(g.menu.row, 0u);
 
-    /* Values: row 3 is P2's nickname. PREV/NEXT are -1/+1. */
-    for (unsigned i = 0u; i < 3u; i++) {
+    /* Values: row 4 is P2's nickname. PREV/NEXT are -1/+1. */
+    for (unsigned i = 0u; i < 4u; i++) {
         rc_t_apply(&g, ACT(MENU_DOWN), t);
     }
-    ASSERT_EQ(g.menu.row, 3u);
+    ASSERT_EQ(g.menu.row, 4u);
     rc_t_apply(&g, ACT(MENU_NEXT), t);
     ASSERT_EQ(g.settings.seat[1].nickname_id, 2u);   /* Alex -> Ahmed */
     ASSERT_EQ(g.settings.seat[2].nickname_id, 1u);   /* swapped       */
@@ -316,10 +318,10 @@ static void test_acceptance_script(void) {
     /* AT-02: yellow, red x4 to P2's faction, blue x4 to Lizard Cult. */
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
     ASSERT_EQ(rc_game_shown_seat(&g), 0u);
-    for (unsigned i = 0u; i < 4u; i++) {
+    for (unsigned i = 0u; i < 5u; i++) {
         rc_t_apply(&g, ACT(MENU_DOWN), t);
     }
-    ASSERT_EQ(g.menu.row, 4u);
+    ASSERT_EQ(g.menu.row, 5u);
     for (unsigned i = 0u; i < 4u; i++) {
         rc_t_apply(&g, ACT(MENU_NEXT), t);
     }
@@ -329,14 +331,14 @@ static void test_acceptance_script(void) {
     for (unsigned i = 0u; i < 3u; i++) {
         rc_t_apply(&g, ACT(MENU_UP), t);
     }
-    ASSERT_EQ(g.menu.row, 1u);
+    ASSERT_EQ(g.menu.row, 2u);
     rc_t_apply(&g, ACT(MENU_NEXT), t);
     ASSERT_EQ(g.settings.seat[0].nickname_id, 1u);
     ASSERT_EQ(g.settings.seat[1].nickname_id, 0u);
 
     /* AT-04: gray to LIMIT, blue to 0:30, green back to READY. */
     rc_t_apply(&g, ACT(MENU_UP), t);
-    ASSERT_EQ(g.menu.row, 0u);
+    ASSERT_EQ(g.menu.row, 1u);
     rc_t_apply(&g, ACT(MENU_NEXT), t);
     ASSERT_EQ(rc_settings_limit_ms(&g.settings), 30000u);
     rc_t_apply(&g, ACT(MENU_DONE), t);
@@ -465,6 +467,7 @@ static void test_alarm_in_game(void) {
     rc_t_apply(&g, ACT(PAUSE), t);
     ASSERT_TRUE(!rc_game_turn_over_limit(&g, t));
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
+    rc_t_apply(&g, ACT(MENU_DOWN), t);
     rc_t_apply(&g, ACT(MENU_PREV), t);            /* 1:00 -> 0:30 */
     ASSERT_EQ(rc_settings_limit_ms(&g.settings), 30000u);
     rc_t_apply(&g, ACT(MENU_DONE), t);
@@ -481,6 +484,7 @@ static void test_alarm_in_game(void) {
      * of the old crossing.) */
     rc_t_apply(&g, ACT(PAUSE), t);                 /* turn at 0:55 */
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
+    rc_t_apply(&g, ACT(MENU_DOWN), t);
     rc_t_apply(&g, ACT(MENU_NEXT), t);             /* 0:30 -> 1:00 */
     rc_t_apply(&g, ACT(MENU_DONE), t);
     ASSERT_TRUE(!rc_game_turn_over_limit(&g, t));
@@ -505,6 +509,7 @@ static void test_alarm_in_game(void) {
     /* Limit Off: never red, never a beep. */
     rc_t_apply(&g, ACT(PAUSE), t);
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
+    rc_t_apply(&g, ACT(MENU_DOWN), t);
     rc_t_apply(&g, ACT(MENU_PREV), t);             /* 0:30 -> Off */
     ASSERT_EQ(rc_settings_limit_ms(&g.settings), 0u);
     rc_t_apply(&g, ACT(MENU_DONE), t);
@@ -538,6 +543,7 @@ static void test_shown_seat_and_red(void) {
     ASSERT_EQ(rc_game_shown_seat(&g), 0u);
     rc_t_apply(&g, ACT(OPEN_SETTINGS), t);
     ASSERT_EQ(rc_game_shown_seat(&g), 0u);   /* would show READY's P1 */
+    rc_t_apply(&g, ACT(MENU_DOWN), t);            /* LIMIT row */
     rc_t_apply(&g, ACT(MENU_NEXT), t);            /* limit 0:30 */
     rc_t_apply(&g, ACT(MENU_DONE), t);
 

@@ -80,3 +80,13 @@ uint32_t rc_player_turn_ms(const rc_player_t *p, uint32_t now_ms) {
 uint32_t rc_player_total_ms(const rc_player_t *p, uint32_t now_ms) {
     return rc_turnlog_sum_ms(&p->log) + rc_player_turn_ms(p, now_ms);
 }
+
+bool rc_player_avg_turn_ms(const rc_player_t *p, uint32_t *avg_ms) {
+    const uint32_t completed =
+        (uint32_t)p->turns_started - (p->in_turn ? 1u : 0u);
+    if (completed == 0u) {
+        return false;
+    }
+    *avg_ms = rc_turnlog_sum_ms(&p->log) / completed;
+    return true;
+}

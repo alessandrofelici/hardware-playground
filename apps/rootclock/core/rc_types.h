@@ -17,7 +17,7 @@
 #define RC_MAX_TURNS  128u    /* per-player turn log capacity               */
 #define RC_HOLD_MS    2000u   /* blue hold for END_GAME / NEW_GAME          */
 #define RC_NO_SEAT    0xFFu   /* "no seat" for active/viewed seat fields    */
-#define RC_APP_VERSION "001"  /* must match VERSION in apps/rootclock/CMakeLists.txt */
+#define RC_APP_VERSION "002"  /* must match VERSION in apps/rootclock/CMakeLists.txt */
 
 /* ---- Game state (documents/03 state diagram) ---- */
 typedef enum {
@@ -53,7 +53,11 @@ typedef struct {
 typedef enum {
     RC_ACT_NONE = 0,
     RC_ACT_START,          /* READY -> RUNNING, seat 0 starts             */
-    RC_ACT_SWITCH,         /* RUNNING: end current turn, begin `seat`'s   */
+    RC_ACT_NEXT,           /* RUNNING: end current turn, begin the next
+                              seat's in the rotation (green)              */
+    RC_ACT_VIEW_NEXT,      /* PAUSED/OVER: show the next seat's card      */
+    RC_ACT_SWITCH,         /* RUNNING: end current turn, begin `seat`'s
+                              (API only; no button emits it since 002)    */
     RC_ACT_PAUSE,          /* RUNNING -> PAUSED                           */
     RC_ACT_RESUME,         /* PAUSED -> RUNNING, same turn continues      */
     RC_ACT_OPEN_SETTINGS,  /* READY|PAUSED -> SETTINGS                    */
@@ -64,7 +68,7 @@ typedef enum {
     RC_ACT_MENU_PREV,      /* SETTINGS: value - (yellow)                  */
     RC_ACT_MENU_NEXT,      /* SETTINGS: value + (blue)                    */
     RC_ACT_MENU_DONE,      /* SETTINGS -> return_state (green)            */
-    RC_ACT_VIEW            /* OVER: show `seat`'s final card              */
+    RC_ACT_VIEW            /* OVER: show `seat`'s final card (API only)   */
 } rc_action_kind_t;
 
 typedef struct {

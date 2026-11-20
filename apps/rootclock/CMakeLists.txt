@@ -32,7 +32,7 @@ target_include_directories(rootclock_display PRIVATE
 target_compile_options(rootclock_display PRIVATE -Wall -Wextra)
 target_link_libraries(rootclock_display fwog_display_bsp pico_rand)
 fwog_display_app(rootclock_display
-    VERSION 001
+    VERSION 002
     DESCRIPTION "rootclock: Root board-game turn clock for 3-4 players, with per-turn limit and faction icons")
 
 add_executable(rootclock_main main/main.c)
@@ -40,5 +40,5 @@ target_link_libraries(rootclock_main fwog_main_bsp)
 # Embeds rootclock_display. Must come after target_link_libraries.
 fwog_embed_display_image(rootclock_main)
 fwog_main_app(rootclock_main
-    VERSION 001
+    VERSION 002
     DESCRIPTION "rootclock: main half (watchdog + display update), carries the rootclock display firmware")
