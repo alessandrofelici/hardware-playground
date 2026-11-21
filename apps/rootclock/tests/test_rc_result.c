@@ -10,7 +10,7 @@
 static const char k_doc_example[] =
     "{\"schema\":\"rootclock.game_result\",\"schema_version\":1,"
     "\"game_id\":\"7f3a9c21e04b5d18\","
-    "\"device\":{\"app\":\"rootclock\",\"app_version\":\"002\"},"
+    "\"device\":{\"app\":\"rootclock\",\"app_version\":\"" RC_APP_VERSION "\"},"
     "\"ended_at\":null,\"turn_limit_ms\":120000,\"global_ms\":666000,"
     "\"players\":["
     "{\"seat\":1,\"nickname\":\"Jacob\",\"faction\":\"marquise\","
@@ -176,7 +176,7 @@ static void test_skipped_seats_and_null_limit(void) {
     static const char expect[] =
         "{\"schema\":\"rootclock.game_result\",\"schema_version\":1,"
         "\"game_id\":\"0000000000000000\","
-        "\"device\":{\"app\":\"rootclock\",\"app_version\":\"002\"},"
+        "\"device\":{\"app\":\"rootclock\",\"app_version\":\"" RC_APP_VERSION "\"},"
         "\"ended_at\":null,\"turn_limit_ms\":null,\"global_ms\":4000,"
         "\"players\":["
         "{\"seat\":1,\"nickname\":\"Jacob\",\"faction\":\"lilypad\","
