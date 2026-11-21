@@ -80,6 +80,33 @@ void lcd_text_draw_padded(uint16_t x, uint16_t y, const char *str,
                           unsigned cols, unsigned scale, uint16_t fg,
                           uint16_t bg);
 
+/* ---- power/bq25896.h: the telemetry reads rootclock makes ---- */
+typedef enum {
+    BQ25896_VBUS_NO_INPUT = 0,
+    BQ25896_VBUS_USB_HOST = 1,
+    BQ25896_VBUS_ADAPTER  = 2,
+    BQ25896_VBUS_OTG      = 7
+} bq25896_vbus_stat_t;
+typedef enum {
+    BQ25896_CHG_NOT_CHARGING = 0,
+    BQ25896_CHG_PRE_CHARGE   = 1,
+    BQ25896_CHG_FAST_CHARGE  = 2,
+    BQ25896_CHG_DONE         = 3
+} bq25896_chg_stat_t;
+typedef enum {
+    BQ25896_VSYS_NOT_IN_VSYSMIN = 0,
+    BQ25896_VSYS_IN_VSYSMIN     = 1
+} bq25896_vsys_stat_t;
+typedef struct {
+    bq25896_vbus_stat_t vbus_stat;
+    bq25896_chg_stat_t  chg_stat;
+    bq25896_vsys_stat_t vsys_stat;
+} bq25896_stat_t;
+bool bq25896_adc_continuous_enable(void);
+bool bq25896_read_stat(bq25896_stat_t *out);
+bool bq25896_read_vbat_mv(uint16_t *mv, bool *thermal_regulation);
+bool bq25896_read_vbus_mv(uint16_t *mv, bool *attached);
+
 /* ---- leds/ws2812_driver.h ---- */
 bool ws2812_init(PIO pio, uint sm);
 

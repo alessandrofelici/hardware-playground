@@ -35,6 +35,7 @@ A FreeWili OG that keeps time for a 3–4 player board game:
 | F14 | *(002)* A PLAYERS setting, 3 or 4, sets the rotation; a seat outside it is dimmed in S2 and never plays | G8 |
 | F15 | *(002)* S1 shows the shown player's average completed turn (`AVG/TURN`) | G19 |
 | F16 | *(002)* While paused, green cycles through the player cards without touching any clock | G18 |
+| F17 | *(003)* While paused, a battery icon with the charge and the estimated time left | G20 |
 
 ## Out of scope
 
@@ -98,6 +99,7 @@ character, scale 3 is 18×24 px. The big digits are drawn by the app at scale 8,
 | Total | 116, 82 | `TOTAL H:MM:SS`, scale 2 |
 | Turn info | 116, 104 | `TURN <n>  LIM <m:ss>`, or `LIM off`, scale 2 |
 | Big timer | 40, 140, 240, 64 | `MM:SS` at scale 8. From 100 minutes it becomes `H:MM:SS` at scale 6 (252 px wide). |
+| Battery | 128, 206, 192, 13 | *(003)* PAUSED only, right-aligned: a 20×10 battery icon filled to the charge and a scale-1 label, `70% ~4h40m left`, `88% charging` or `on USB`. |
 | Hint row | 0, 220, 320, 20 | One colour swatch and a label for each button that is live in this state. |
 
 How S1 looks in each state:
@@ -170,8 +172,8 @@ terminal for AT-11. Each test is one step of a continuous demo, in order.
 | AT-07 | At ~0:15 press green. | S1 switches to P2 (now named Jacob) with the Lizard Cult icon. The big timer restarts at `00:00`. P1's average is its one turn. | F1, F5, F9, F15 |
 | AT-08 | Wait past 0:30 on P2's turn. | At `00:30`, one beep. The digits turn red and keep counting (`00:31`, `00:32`, ...). | F8 |
 | AT-09 | Green, wait 1 s, green. | P3's turn, white, then P1's second turn: P4 is skipped with 3 players. P1's `TOTAL` resumes from ~0:15 and grows; its average does not move. | F1, F5, F6, F8, F14 |
-| AT-10 | Red. Green ×3, wait, green, then red. | PAUSED: green shows P2, P3, P1 in turn while every number stays frozen. Red resumes P1's same turn even though P2's card was showing. | F2, F7, F16 |
-| AT-11 | Green (P2), wait a second, red to pause, hold blue 2 s. | GAME OVER. GAME stops. The console prints one result JSON line ([04](04-future-esp32-integration.md) schema) with 3 players, no P4 entry, `app_version` `002`, each `total_ms` equal to the sum of its `turns_ms`, and `global_ms` equal to the sum of the totals. | F3, F7, R-EXP-2 |
+| AT-10 | Red. Green ×3, wait, green, then red. | PAUSED: the battery line shows under the big digits. Green shows P2, P3, P1 in turn while every number stays frozen. Red resumes P1's same turn even though P2's card was showing. | F2, F7, F16, F17 |
+| AT-11 | Green (P2), wait a second, red to pause, hold blue 2 s. | GAME OVER. GAME stops. The console prints one result JSON line ([04](04-future-esp32-integration.md) schema) with 3 players, no P4 entry, `app_version` `003`, each `total_ms` equal to the sum of its `turns_ms`, and `global_ms` equal to the sum of the totals. | F3, F7, R-EXP-2 |
 | AT-12 | Green ×3, then gray, yellow and blue taps. | Green shows P3, P1, P2 with their totals in the big digits. The other taps change nothing. | F3, F11 |
 | AT-13 | Hold blue 2 s. | READY again. All clocks and averages are zero and the settings from AT-02..04 are kept (3 players). | F3 |
 | AT-14 | Red (start), then tap red quickly. | The game pauses. The LED bar flickers one red pixel and restores. The board stays on. | F13 |

@@ -58,6 +58,7 @@ apps/rootclock/
 | **TurnLimitAlarm** | `rc_alarm_t` / `rc_alarm.c` | Crossing the limit beeps once per turn; the over-limit state colours the digits. | `fired_this_turn` | `rc_alarm_reset()` at turn start; `rc_alarm_check(turn_ms, limit_ms, running)` → beep once on crossing; `rc_alarm_over(turn_ms, limit_ms)` → red |
 | **InputMapper** | `rc_input_t` / `rc_input.c` | Turns button edges into actions for the current state, including the 2 s blue hold. | `pressed_at_ms[5]`, `hold_fired` mask | `rc_input_map(in, state, buttons, now)` → `rc_action_t`; `rc_input_hold_progress()` for the "keep holding..." hint |
 | **Action** | `rc_action_t` / `rc_types.h` | What the user asked for, independent of which button. | `kind`, `seat` | kinds: `START`, `NEXT`, `VIEW_NEXT`, `PAUSE`, `RESUME`, `OPEN_SETTINGS`, `END_GAME`, `NEW_GAME`, `MENU_UP`, `MENU_DOWN`, `MENU_PREV`, `MENU_NEXT`, `MENU_DONE`; `SWITCH` and `VIEW` (to a given seat) stay in the API, but since 002 no button emits them |
+| **BatteryGauge** | `rc_battery_t` / `rc_battery.c` | *(003)* Charge and time left from charger readings: Li-ion voltage curve, smoothing, drain slope. | `mv_x16` (EMA), history of (`ms`, percent) per minute, `usb`, `charging` | `rc_battery_update(now, mv, usb, charging, full)`, `rc_battery_view()` → mode, percent, minutes left, measured? |
 | **GameResult** | `rc_result_t` / `rc_result.c` | Frozen snapshot at game end. This is the export payload's data. | `game_id`, `limit_ms`, `global_ms`, `players[]` of {`seat`, `nickname`, `faction_key`, `total_ms`, `turns_ms[]`, `truncated`}. Only seats with ≥ 1 turn. | `rc_result_build(game, now)` |
 | **ResultSerializer** | `rc_result.c` | Writes contract v1 JSON ([04](04-future-esp32-integration.md)). | — | `rc_result_to_json(result, buf, cap)` → length, 0 on overflow |
 
@@ -70,6 +71,7 @@ apps/rootclock/
 | **BigDigits** | `ui_bigdigits.c` | Large timer text from `lcd_font_expand()` at scale 6 or 8. | static glyph buffer (48×64 RGB565, 6 KB), last string and colour | `ui_bigdigits_draw(x, y, str, scale, fg, bg)`, which blits only the glyphs that changed |
 | **IconStore** | `assets/faction_icons.c` (generated) | 96×96 RGB565 faction icons in flash, indexed by `rc_faction_id_t`. | `const uint16_t px[13][96*96]` | `rc_icon_get(id)` → `{w, h, px}` |
 | **Beeper** | `beeper.c` | The time-limit sound. | static 8 kHz sample buffer (~3.2 KB), synthesised once | `beeper_init()` (`i2s_audio_init(pio0, 2)`), `beeper_beep()`, `beeper_process()` (calls `i2s_audio_process()`) |
+| **ChargerReader** | `battery.c` | *(003)* Reads BQ25896 status, BATV and VBUSV every 5 s into the BatteryGauge; turns the charger ADC on; never writes a charge setting. | next read time, failure count (backs off after 3) | `battery_init(now)`, `battery_poll(gauge, now)` |
 | **App** | `display/main.c` | Owns the loop and wires the parts together. | `rc_game_t`, `rc_input_t` | loop: `fwog_power_poll()` → `rc_input_map()` → `rc_game_apply()` → `rc_game_tick()` → beep → render → `beeper_process()` |
 
 ### Future (`<<future>>`, see [04](04-future-esp32-integration.md))

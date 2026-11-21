@@ -58,10 +58,30 @@ the paused turn whichever card is showing.
 - A seat that never takes a turn is left out of the results.
 - While paused, the active player's card shows their frozen turn; any other card shows that
   player's total. Both are dim gray.
+- **Battery** (003): while paused, a small battery icon and a label sit under the big digits,
+  right-aligned: `70% ~4h40m left`, `88% charging` or `on USB`. See below for how it is
+  worked out.
 - When the game ends, the result is printed once on the display CPU's USB console as a
   `RESULT {json}` line. The JSON follows payload contract v1, in
   [`documents/04`](../../documents/04-future-esp32-integration.md).
 - Settings are **not saved** across power-off. This is an MVP limit.
+
+## Battery estimate
+
+The board has no fuel gauge, only the BQ25896 charger, which measures the battery voltage in
+20 mV steps and reports USB input and charge state. `display/battery.c` reads three charger
+registers every 5 s (status, BATV, VBUSV; it only turns on the charger's ADC and never writes
+a charge setting) and feeds `core/rc_battery.c`:
+
+- **Percent** comes from the smoothed voltage through a typical 1-cell Li-ion curve
+  (3.27 V = 0 %, 4.20 V = 100 %). It reads a little low under load and high while charging.
+- **Time left** is percent divided by the drain rate. For the first 10 minutes on battery the
+  rate is an assumption, 15 %/hour (about 150 mA from a 1000 mAh cell). After that it is
+  measured: the slope of the last 30 minutes of readings. Plugging or unplugging USB starts
+  the measurement again. `STATE` reports which one is in use (`batt.measured`).
+
+The 15 %/hour assumption and the voltage curve are guesses until checked against this board's
+cell; both are constants at the top of `core/rc_battery.{h,c}`.
 
 ## Test console and the unattended hardware check
 
@@ -72,7 +92,7 @@ port at 1200 baud reboots that CPU into BOOTSEL.
 |---|---|
 | `press <gray\|yellow\|green\|blue\|red>` | inject a 100 ms tap through the real debounce/power path |
 | `hold <btn> <ms>` | inject a hold. Red is refused at 1000 ms or more. |
-| `state` | one `STATE {json}` line with the model: state, seats, clocks, averages (`avg`, -1 = none yet), settings (`players`, `limit_ms`, `nick`, `fac`), beep count |
+| `state` | one `STATE {json}` line with the model: state, seats, clocks, averages (`avg`, -1 = none yet), settings (`players`, `limit_ms`, `nick`, `fac`), beep count, battery (`batt`: mode, mV, percent, minutes left or -1, measured) |
 | `result` | re-print the last `RESULT {json}` |
 | `reset` | a new READY game with default settings |
 
@@ -146,7 +166,8 @@ These are small layout choices made so that everything fits at 320 px:
 
 | Path | What |
 |---|---|
-| `core/` | Game logic, pure C11 with no SDK, host-testable: state machine, clocks, settings, input mapping, result JSON |
+| `core/` | Game logic, pure C11 with no SDK, host-testable: state machine, clocks, settings, input mapping, result JSON, battery estimate |
+| `display/battery.c` | Reads the charger into the battery estimate |
 | `display/main.c` | The loop that wires `core/` to the BSP, plus the test console |
 | `display/ui_*.c`, `beeper.c` | S1 and S2 screens, the big-digit renderer, the limit beep |
 | `display/assets/faction_icons.c` | **Generated** 96×96 RGB565 icons. Regenerate with `py apps/rootclock/tools/gen_faction_icons.py` |
