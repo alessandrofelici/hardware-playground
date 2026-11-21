@@ -75,8 +75,9 @@ root-metrics (hosted on Vercel, or Docker on your network):
 
 1. Set root-metrics up and give it an `INGEST_TOKEN` (its README: *Hosting on Vercel +
    Supabase*, or *Docker*).
-2. Flash the Bottlenose with `apps/bottlenose/c6/bottlenose_c6` **1.3 or later**. In its
-   `secrets.h` put your Wi-Fi, `RESULTS_URL` (`https://<app>.vercel.app/api/results`) and
+2. Flash the Bottlenose with `apps/bottlenose/c6/bottlenose_c6` **1.4 or later** (1.3 drops
+   every game the board sends it). In its `secrets.h` put your Wi-Fi, `RESULTS_URL`
+   (`https://<app>.vercel.app/api/results`, the Vercel app, not the Supabase project URL) and
    `RESULTS_TOKEN` (the same token). See `apps/bottlenose/README.md`.
 3. `fw run rootclock`.
 

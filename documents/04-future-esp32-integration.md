@@ -307,7 +307,7 @@ chunks and about 85 UART lines, well under 1 s at 115200.
 | `core/rc_uplink.c` | Everything that can be pure: message formats, reassembly, C6 lines and their parser, outbox, the sender state machine, the GAME OVER text. Host-tested. |
 | `main/bridge.c` | OrcaBridge: reassemble chunks, stream `RESULT` lines, parse replies, report 0x52. Portable, host-tested, and run by the simulator. |
 | `main/main.c` | UART1 driver (bottlenose's IRQ ring and line assembly), the link, the USB console, `board_watchdog_kick()` every loop. |
-| `apps/bottlenose/c6/` | The sketch, 1.3: `RESULT` lines with length and CRC checks, LittleFS queue, HTTPS POST with the token and the retry schedule, `WIFI ON/OFF`, `QUEUE`. The bottlenose app itself is unaffected. |
+| `apps/bottlenose/c6/` | The sketch, 1.4 (1.3 lost every result sent over the header, see below): `RESULT` lines with length and CRC checks, LittleFS queue, HTTPS POST with the token and the retry schedule, `WIFI ON/OFF`, `QUEUE`. The bottlenose app itself is unaffected. |
 | `core/` (result) | Nothing: `GameResult` and `ResultSerializer` already existed. |
 
 ## 4. The receiving app: root-metrics (the original starter brief is [06](06-mobile-app-starter-spec.md))
@@ -335,7 +335,7 @@ Board not available while this was written, so nothing here has run on hardware 
 | C6 sketch | Compiles with arduino-cli and esp32 core 4.0.0 for *ESP32C6 Dev Module* with no warnings; 97 % of the default 1.2 MB app partition. Not run on a C6. |
 
 To check on the board, in this order: `fw run rootclock` with no Bottlenose (AT-12U should
-report the result kept), then flash the C6 with 1.3 and `secrets.h`, plug it in, and run
+report the result kept), then flash the C6 with 1.4 and `secrets.h`, plug it in, and run
 `hw_check.py` again: AT-12U should end in `delivered`, and the game should be on the
 root-metrics page.
 

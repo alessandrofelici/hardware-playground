@@ -8,7 +8,7 @@
  *   C6 GPIO17 (U0RXD) <- header pin 9 <- GPIO 8 (UART1 TX)
  *   115200 8N1, no flow control
  *
- * The C6 must run apps/bottlenose/c6/bottlenose_c6 1.3 or later, which knows
+ * The C6 must run apps/bottlenose/c6/bottlenose_c6 1.4 or later, which knows
  * the RESULT and WIFI ON/OFF commands. Without a Bottlenose, nothing changes
  * for the game: the display keeps its results and says no WiFi module was
  * found.
