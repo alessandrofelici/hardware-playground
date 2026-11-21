@@ -1,14 +1,24 @@
-# 04 — Future integration: sending results through the ESP32 to the app
+# 04 — Sending results through the ESP32 to the app
 
-**Status: design only on the firmware side. None of this is in the MVP.** This page fixes
-three things so that neither the firmware nor the app has to guess later:
+**Status: built in rootclock 004** (branch `feat/rootclock-wifi-upload`), not yet run on
+hardware. What changed from the first design is marked *(004)*; [§5](#5-what-was-built-004)
+lists where each part lives and how it was tested. This page fixes three things so that
+neither the firmware nor the app has to guess:
 
 - **the payload contract** (§2), which the MVP already produces on the USB console when a game
   ends (verification hook, [02](02-mvp.md));
 - **where each hop lives** (§1), so the MVP's object model has a place to plug the export in;
 - **the transport: Wi-Fi HTTP POST** to the root-metrics server (§1, Hop 3). Decided
-  2026-11-20, because the receiving app is a web server on the local network, not a phone
-  app.
+  2026-11-20, because the receiving app is a web server, not a phone app. *(004)* The server
+  can be hosted (Vercel + Supabase, HTTPS) or on the LAN (Docker, HTTP).
+
+**How it works for the players (004).** When the game ends, the board asks the WiFi module to
+connect and the GAME OVER screen says how that is going. **Yellow** sends the result. The
+display keeps every finished game in a small outbox (4 games) until the WiFi module confirms it
+has **saved it to its own flash**; the module then uploads it and retries until the server has
+it. So no Bottlenose, no Wi-Fi, a server outage or a power-off never loses a game: it either
+stays on the display (yellow tries again) or waits on the module and goes up later. While a
+game is being played, the module's radio is off.
 
 Requirement covered: R-EXP-1 (send each player's nickname, faction, total time, and an array
 of per-turn times after the game) and R-EXP-2 ([01](01-spec-review.md)).
@@ -23,12 +33,12 @@ flowchart LR
         D -- "UART0 link, 0x50 RESULT_CHUNK" --> M
         M -- "0x51 ACK, 0x52 UPLINK_STATUS" --> D
     end
-    C6["Bottlenose ESP32-C6"]
-    S["root-metrics server<br/>Docker, SQLite"]
+    C6["Bottlenose ESP32-C6<br/>saves to LittleFS, uploads"]
+    S["root-metrics<br/>Vercel + Supabase, or Docker + SQLite"]
     P["Phones<br/>web browser"]
     M -- "UART1 115200, RESULT lines" --> C6
-    C6 -- "Wi-Fi: HTTP POST /api/results" --> S
-    P -- "http://host:8080" --> S
+    C6 -- "Wi-Fi: HTTPS POST /api/results<br/>Bearer token" --> S
+    P -- "https://app.vercel.app or http://host:8080" --> S
 ```
 
 ```mermaid
@@ -37,7 +47,12 @@ sequenceDiagram
     participant M as Main CPU
     participant C as ESP32-C6
     participant S as root-metrics server
-    D->>D: game over, rc_result_to_json()
+    D->>D: game over, rc_result_to_json(), into the outbox
+    D->>M: link 0x53 WIFI on
+    M->>C: WIFI ON
+    C-->>M: WIFI connecting, WIFI up
+    M-->>D: link 0x52 UPLINK_STATUS (each change, and every second)
+    Note over D: yellow pressed
     loop each chunk of at most 1 KB
         D->>M: link 0x50 RESULT_CHUNK(seq, data)
         M-->>D: link 0x51 ACK(seq)
@@ -47,10 +62,14 @@ sequenceDiagram
         M->>C: RESULT DATA seq slice
     end
     M->>C: RESULT END id
-    C->>S: POST /api/results (contract v1 JSON)
+    C->>C: check length and CRC, save /q/NNNNNN_id.json
+    C-->>M: RESULT QUEUED id saved
+    M-->>D: UPLINK_STATUS(saved): the display drops it from the outbox
+    C->>S: POST /api/results (contract v1 JSON, Bearer token)
     S-->>C: 201 stored, or 200 duplicate
-    C-->>M: RESULT OK id
-    M-->>D: link 0x52 UPLINK_STATUS(delivered)
+    C->>C: delete the file
+    C-->>M: RESULT OK id 201
+    M-->>D: UPLINK_STATUS(delivered)
 ```
 
 ### Hop 1: display → main, over the inter-CPU link (UART0)
@@ -59,11 +78,15 @@ The link frames are `[0x7E][len16][payload][crc16]` with a payload of at most 41
 byte 0 is the message type, and app types start at 0x40. The bottlenose app uses 0x40/0x41 in
 its own image. The proposed types for rootclock:
 
-| Type | Name | Direction | Payload (proposal) |
+| Type | Name | Direction | Payload *(004, `core/rc_uplink.h`)* |
 |---|---|---|---|
-| 0x50 | `RC_MSG_RESULT_CHUNK` | display → main | `seq` u8, `last` flag u8, up to 1024 bytes of JSON |
-| 0x51 | `RC_MSG_RESULT_ACK` | main → display | `seq` u8 received OK |
-| 0x52 | `RC_MSG_UPLINK_STATUS` | main → display | C6 alive, transport connected, last delivery result |
+| 0x50 | `RC_MSG_RESULT_CHUNK` | display → main | `seq` u8, flags u8 (bit 0 = last), up to 1024 bytes of JSON. `seq` 0 starts a result. |
+| 0x51 | `RC_MSG_RESULT_ACK` | main → display | `seq` u8, code u8: 0 OK (also for a repeat of the last chunk), 1 bad sequence (start again), 2 too big, 3 busy (main is still handing over the previous result) |
+| 0x52 | `RC_MSG_UPLINK_STATUS` | main → display | 14 bytes: C6 alive, Wi-Fi state and why it is down, result state (receiving / to C6 / saved / delivered / rejected / failed) and detail, HTTP status, games waiting on the C6, and a 32-bit tag of the game it is about (the first 8 hex digits of `game_id`). Small enough for the display's 32-byte UART FIFO, so main never waits on it. |
+| 0x53 | `RC_MSG_WIFI` | display → main | u8: 1 = on (sent in GAME OVER), 0 = off once idle (any other state) |
+
+The display sends one chunk at a time and resends it after 300 ms without an ACK, four times
+at most. After the last ACK it waits up to 30 s for `saved` or `delivered` with its tag.
 
 Rules carried over from `apps/bottlenose` and the BSP:
 
@@ -86,28 +109,34 @@ no spaces or newlines.
 
 | Line | Direction | Meaning |
 |---|---|---|
-| `RESULT BEGIN <game_id> <bytes> <crc32hex>` | OG → C6 | start of one result |
+| `RESULT BEGIN <game_id> <bytes> <crc32hex>` | OG → C6 | start of one result (CRC-32/IEEE) |
 | `RESULT DATA <seq> <≤56 chars>` | OG → C6 | one slice of the JSON |
 | `RESULT END <game_id>` | OG → C6 | complete; the C6 checks length and CRC |
-| `RESULT OK <game_id>` | C6 → OG | the server stored it (HTTP 201) or already had it (HTTP 200) |
-| `RESULT QUEUED <game_id>` | C6 → OG | held on the C6 because the server or Wi-Fi is unreachable; the C6 keeps retrying |
-| `RESULT ERR <game_id> <reason>` | C6 → OG | the C6 rejected it (bad length or CRC: the OG resends), or the server returned 400 (`<reason>` = `400`: do not resend) |
+| `WIFI ON` / `WIFI OFF` | OG → C6 | *(004)* radio on; or off once nothing is waiting to upload. Main sends OFF at boot and the display's wish after that. |
+| `RESULT QUEUED <game_id> <why>` | C6 → OG | *(004)* saved to the C6's flash (`saved`), or an upload failed and it will retry (`net`, `http<code>`) |
+| `RESULT OK <game_id> <http>` | C6 → OG | the server stored it (201) or already had it (200); the file is deleted |
+| `RESULT ERR <game_id> <reason>` | C6 → OG | `crc`, `len`, `seq`: garbled, main resends (3 tries); `nourl`: no `RESULTS_URL`; `fs`: no flash; an HTTP 4xx: refused. 401/403 mean a wrong token: the C6 keeps the game and stops trying until restarted. Other 4xx are moved to `/bad/`. |
+| `QUEUE <n>` | C6 → OG | *(004)* games saved on the C6 and not yet uploaded |
+| `UPLOAD <text>` | C6 → OG | *(004)* progress for people on the console |
+
+Main sends one line per loop iteration and kicks its watchdog between them. The C6 has an 8 KB
+receive buffer, so a whole result fits while it is busy uploading.
 
 ### Hop 3: ESP32-C6 → root-metrics server, over Wi-Fi HTTP POST (chosen)
 
-The receiver is **root-metrics** (repository `alessandrofelici/root-metrics`). It is a
-TypeScript/Hono web app with SQLite, running in Docker on a host computer on the local
-network. Phones read results in a browser at `http://<host>:8080`, so nothing has to be sent
-to a phone directly.
+The receiver is **root-metrics** (repository `alessandrofelici/root-metrics`), a
+TypeScript/Hono web app. *(004)* It runs hosted on Vercel with its results in Supabase, or in
+Docker on a computer on the LAN with SQLite. Phones read results in a browser, so nothing has
+to be sent to a phone directly.
 
 **The request**
 
 | | |
 |---|---|
-| Method and URL | `POST http://<host>:8080/api/results` |
-| Headers | `Content-Type: application/json` |
+| Method and URL | `POST https://<app>.vercel.app/api/results`, or `http://<host>:8080/api/results` on the LAN |
+| Headers | `Content-Type: application/json`, *(004)* `Authorization: Bearer <token>` |
 | Body | One contract-v1 result (§2), exactly as the OG produced it: compact, about 6 KB at most |
-| Security | **Plain HTTP and no authentication.** The bottlenose sketch has no TLS (HTTPS would need `WiFiClientSecure`), and the network is the user's own. A shared-token header can be added later as an additive change. |
+| Security | *(004)* The token is root-metrics' `INGEST_TOKEN`, stored on the C6 as `RESULTS_TOKEN` in `secrets.h`. HTTPS uses `WiFiClientSecure` with the roots in `root_cas.h` (GTS Root R1 for `*.vercel.app`, ISRG for Let's Encrypt). The C6 waits for NTP before an HTTPS upload, since certificates have dates. |
 
 **The responses**
 
@@ -116,18 +145,20 @@ to a phone directly.
 | `201 Created` | `{"status":"stored","game_id":"…"}` | Success. Reply `RESULT OK`. |
 | `200 OK` | `{"status":"duplicate","game_id":"…"}` | Already stored, also a success. Reply `RESULT OK`. |
 | `400 Bad Request` | `{"error":"<parser message>"}` | The payload is invalid. Reply `RESULT ERR <id> 400` and **do not retry**. |
+| `401 Unauthorized` | `{"error":"..."}` | *(004)* Wrong token. Reply `RESULT ERR <id> 401`, keep the game, stop retrying until the C6 restarts (a reflash with the right token). |
 | `5xx`, timeout, or no Wi-Fi | — | Reply `RESULT QUEUED`, then retry with backoff (5 s, 15 s, 60 s, then every 5 min) while the board is on. |
 
-**C6 configuration.** `RESULTS_URL` goes in `secrets.h`, next to `WIFI_SSID` and
-`WIFI_PASS` (git-ignored). The host's address should be fixed, by a DHCP reservation or a
-static IP. The C6 only sees 2.4 GHz networks.
+**C6 configuration.** `RESULTS_URL` and `RESULTS_TOKEN` go in `secrets.h`, next to
+`WIFI_SSID` and `WIFI_PASS` (git-ignored). For a LAN server, its address should be fixed, by a
+DHCP reservation or a static IP. The C6 only sees 2.4 GHz networks.
 
 **Why HTTP.** The receiver is a LAN web server. Bluetooth (BLE) would need a radio bridge
 into the Docker container, and a C6 soft access point would force the host off its network.
 HTTP is also what the bottlenose sketch already does successfully.
 
-**Development path without the ESP32.** A host-side script reads `RESULT {json}` lines from
-the display CPU's USB console and POSTs them to the same endpoint:
+**Development path without the ESP32.** *(004)* `apps/rootclock/tools/upload_results.py`
+reads `RESULT {json}` lines from the display CPU's USB console and POSTs them to the same
+endpoint (`--watch` uploads each game as it ends):
 - the display CPU is VID 093C, PID 2055, opened at **115200**;
 - **never 1200**, which reboots the CPU into BOOTSEL.
 
@@ -136,9 +167,10 @@ not yet built. It runs on the host, not in the container, because Docker on Wind
 pass a COM port through.
 
 Delivery is **at least once**. The OG and the C6 retry until `RESULT OK`, so the server must
-treat `game_id` as idempotent (the `200 duplicate` response). The last result stays in
-display RAM until delivered or until a new game starts, and in C6 RAM while it is queued.
-Persisting it across power-off is post-MVP, like settings persistence.
+treat `game_id` as idempotent (the `200 duplicate` response). *(004)* A result stays in the
+display's outbox (RAM, 4 games, survives a new game but not a power-off) until the C6 has saved
+it to flash, and on the C6's flash (survives power-off) until the server has it. If the outbox
+is full when a fifth game ends, the oldest unsent one is dropped and the console says so.
 
 ## 2. Payload contract v1
 
@@ -267,15 +299,16 @@ long 4-player game of 30 turns each is about 1.5 KB. The worst case (4 × 128 tu
 4.7 KB, which is more than one link frame (4160 B), hence the chunking. That is at most 5 link
 chunks and about 85 UART lines, well under 1 s at 115200.
 
-## 3. Firmware work this implies, later
+## 3. Firmware work (done in 004)
 
 | Where | Work |
 |---|---|
-| `display/` | `ExportLink`: start after GAME OVER (automatically, or with a button TBD), send chunks without blocking, show the uplink state in the S1 hint row. |
-| `common/rc_link.h` | The 0x50–0x52 type numbers and the timeout send, shared by both halves (the bottlenose pattern). |
-| `main/` | `OrcaBridge`: a UART1 driver (copy bottlenose's IRQ ring and line assembly), reassemble chunks, emit `RESULT` lines, parse replies, keep `board_watchdog_kick()` in every loop. |
-| `c6/` | Extend the bottlenose sketch: buffer `RESULT` lines, check length and CRC, `HTTP POST` the JSON to `RESULTS_URL` with the retry schedule above, and reply `OK`/`QUEUED`/`ERR`. |
-| `core/` | Nothing: `GameResult` and `ResultSerializer` already exist in the MVP. |
+| `display/export.c` | ExportLink: outbox, WIFI on/off by state, yellow sends, chunks without blocking (`common/rc_link.h`), status for the GAME OVER line. |
+| `core/rc_uplink.c` | Everything that can be pure: message formats, reassembly, C6 lines and their parser, outbox, the sender state machine, the GAME OVER text. Host-tested. |
+| `main/bridge.c` | OrcaBridge: reassemble chunks, stream `RESULT` lines, parse replies, report 0x52. Portable, host-tested, and run by the simulator. |
+| `main/main.c` | UART1 driver (bottlenose's IRQ ring and line assembly), the link, the USB console, `board_watchdog_kick()` every loop. |
+| `apps/bottlenose/c6/` | The sketch, 1.3: `RESULT` lines with length and CRC checks, LittleFS queue, HTTPS POST with the token and the retry schedule, `WIFI ON/OFF`, `QUEUE`. The bottlenose app itself is unaffected. |
+| `core/` (result) | Nothing: `GameResult` and `ResultSerializer` already existed. |
 
 ## 4. The receiving app: root-metrics (the original starter brief is [06](06-mobile-app-starter-spec.md))
 
@@ -289,3 +322,20 @@ chunks and about 85 UART lines, well under 1 s at 115200.
 - Per-nickname history across games (the four names make a natural leaderboard).
 - Candidate **v2** fields, **not** in v1 and not to be assumed: global turn order, pause
   intervals, `started_at`, board serial, player count chosen at setup.
+
+## 5. What was built (004)
+
+Board not available while this was written, so nothing here has run on hardware yet.
+
+| Check | Result |
+|---|---|
+| Host tests (`apps/rootclock/tests`) | `test_rc_uplink` covers the formats, reassembly (repeats, bad order, too big), C6 line lengths and CRC, outbox, sender (lost ACKs, restarts, timeouts), the GAME OVER text (always ≤ 52 columns) and the bridge end to end against a fake display and C6. |
+| Firmware build | `rootclock_main` (carrying `rootclock_display`) builds with no warnings, arm-none-eabi-gcc 14.2, Pico SDK 2.3.1. |
+| Simulator (`tools/sim`) | The display app and `main/bridge.c` run on a PC, joined by the BSP's link framing; `tools/sim/fake_c6.py` plays the C6. `hw_check.py` AT-12U uploads to a running root-metrics (SQLite and Supabase) and passes; with no C6 it checks the result stays on the display. |
+| C6 sketch | Compiles with arduino-cli and esp32 core 4.0.0 for *ESP32C6 Dev Module* with no warnings; 97 % of the default 1.2 MB app partition. Not run on a C6. |
+
+To check on the board, in this order: `fw run rootclock` with no Bottlenose (AT-12U should
+report the result kept), then flash the C6 with 1.3 and `secrets.h`, plug it in, and run
+`hw_check.py` again: AT-12U should end in `delivered`, and the game should be on the
+root-metrics page.
+

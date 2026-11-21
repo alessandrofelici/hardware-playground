@@ -107,6 +107,16 @@ bool bq25896_read_stat(bq25896_stat_t *out);
 bool bq25896_read_vbat_mv(uint16_t *mv, bool *thermal_regulation);
 bool bq25896_read_vbus_mv(uint16_t *mv, bool *attached);
 
+/* ---- common/link: the inter-CPU link (framing is the BSP's real
+ * link_frame.c; sim_link.c wires the UART to main's bridge) ---- */
+#include "common/link/link_frame.h"
+#ifndef FWOG_LINK_BAUD
+#define FWOG_LINK_BAUD 12500000u
+#endif
+bool fwog_link_uart_init(uint32_t baud);
+bool fwog_link_uart_read(uint8_t *b);
+bool fwog_ioexp_link_handle(const void *payload, size_t len);
+
 /* ---- leds/ws2812_driver.h ---- */
 bool ws2812_init(PIO pio, uint sm);
 

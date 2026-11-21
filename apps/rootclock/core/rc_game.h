@@ -24,6 +24,8 @@
  *                                          returns RC_EVT_GAME_OVER)
  *   OVER     --VIEW_NEXT-->      OVER     (viewed_seat = next seat)
  *   OVER     --VIEW s-->         OVER     (viewed_seat = s. API only)
+ *   OVER     --SEND-->           OVER     (nothing changes; returns
+ *                                          RC_EVT_SEND for the uplink)
  *   OVER     --NEW_GAME-->       READY    (clocks and logs zeroed, settings
  *                                          kept, game_seq++)
  * Any action not listed for the current state is ignored (returns NONE and

@@ -2,8 +2,11 @@
  * companion of the FreeWili OG app in ../.. (apps/bottlenose).
  *
  * Joins Wi-Fi, gets the time over NTP, fetches one small URL over plain HTTP,
- * and reports all of it to the FreeWili as text lines. Every line goes out
- * on two ports:
+ * and reports all of it to the FreeWili as text lines. Since 1.3 it also
+ * receives finished rootclock games from the FreeWili, saves each one to its
+ * own flash (LittleFS) and uploads it to root-metrics (RESULTS_URL in
+ * secrets.h), retrying until the server has it -- so a game survives no
+ * Wi-Fi, a server outage or a power-off. Every line goes out on two ports:
  *   Serial0 -- UART0 on GPIO16 (TX) / GPIO17 (RX), 115200 8N1: the FreeWili's
  *              main CPU, breakout UART1. This is the link.
  *   Serial  -- the Bottlenose's USB-C port, for watching it from a PC.
@@ -25,13 +28,29 @@
  *   NET <body>                       the fetched text: your public IP
  *   SCAN <n> networks, AP <dBm> ch<n> <ssid>   after a scan
  *   ERR <text>                       an unknown command
+ *   QUEUE <n>                        games saved here, not yet uploaded
+ *   RESULT QUEUED <id> <why>         saved to flash (why: saved | net |
+ *                                    http<code>); uploading / will retry
+ *   RESULT OK <id> <http>            the server has it (201, or 200 when
+ *                                    it already had it); deleted here
+ *   RESULT ERR <id> <reason>         crc | len | seq: garbled, send again;
+ *                                    nourl: no RESULTS_URL; fs: no flash;
+ *                                    <http 4xx>: refused (401/403 = token)
+ *   UPLOAD <text>                    upload progress, for people
  * Everything is re-sent every 30 s, so a display that missed it catches up.
  *
  * ---- Commands accepted, from either port ----
- *   SCAN, FETCH, STATUS, HELP (case-insensitive) */
+ *   SCAN, FETCH, STATUS, HELP, QUEUE (case-insensitive)
+ *   WIFI ON | WIFI OFF   OFF switches the radio off once nothing is waiting
+ *                        to upload; ON (the state at boot) joins again
+ *   RESULT BEGIN <id> <bytes> <crc32 hex>   then RESULT DATA <seq> <text>
+ *   lines, then RESULT END <id>: one game, sent by rootclock's main CPU.
+ *   The CRC is CRC-32/IEEE of the JSON. See documents/04 in the repo. */
 #include <Arduino.h>
 #include <HTTPClient.h>
+#include <LittleFS.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <stdarg.h>
 #include <string.h>
 #include <time.h>
@@ -43,11 +62,13 @@
 #error "Copy secrets.example.h to secrets.h and put your Wi-Fi name and password in it."
 #endif
 
+#include "root_cas.h"
+
 #if !ARDUINO_USB_CDC_ON_BOOT
 #error "Set Tools > USB CDC On Boot > Enabled, so Serial is the USB port and Serial0 is the FreeWili link."
 #endif
 
-static const char *FW_VERSION = "1.2";
+static const char *FW_VERSION = "1.3";
 // POSIX TZ string. "UTC0" is UTC; for example Central Europe is
 // "CET-1CEST,M3.5.0,M10.5.0/3" and US Eastern is "EST5EDT,M3.2.0,M11.1.0".
 static const char *TZ_INFO = "UTC0";
@@ -66,6 +87,41 @@ static const uint32_t STATUS_PERIOD_MS = 30000;
 // the failures it gives up on (a wrong password after the first attempt).
 static const uint32_t REJOIN_AFTER_MS  = 60000;
 static const int      SCAN_SHOW        = 6;
+
+// ---- rootclock results ----
+// A whole result (worst case ~4.7 KB, see documents/04) can arrive while an
+// upload is blocking loop(), so the link's receive buffer holds one.
+static const size_t   OG_RX_BUFFER     = 8192;
+static const size_t   RESULT_MAX       = 6144;
+static const char    *QUEUE_DIR        = "/q";
+static const char    *BAD_DIR          = "/bad";
+// Seconds between upload attempts while Wi-Fi is up: 5, 15, 60, then every
+// 5 minutes. A new game or WIFI ON tries again at once.
+static const uint32_t RETRY_S[]        = {5, 15, 60, 300};
+static const uint32_t NTP_WAIT_MS      = 30000;  // HTTPS needs the time
+static const uint32_t RX_STALE_MS      = 5000;   // a result cut off mid-way
+
+static bool     s_fs_ok;
+static bool     s_wifi_wanted = true;    // WIFI ON/OFF; joins at boot
+static bool     s_radio_off;             // the radio is actually off
+static uint32_t s_next_try;              // millis() of the next upload
+static unsigned s_tries;
+static bool     s_paused;                // 401/403: wrong token, stop trying
+static uint32_t s_up_since;
+static unsigned s_seq_counter;           // file-name order of saved results
+static unsigned s_queue_n;               // saved results (cached count)
+static char     s_body[RESULT_MAX + 1];  // one result, receive or upload
+
+static struct {
+  bool     active;
+  char     id[33];
+  size_t   bytes;
+  uint32_t crc;
+  size_t   len;
+  unsigned next_seq;
+  bool     bad;
+  uint32_t last_ms;
+} s_rx;
 
 static char     s_wifi[40];            // the last WIFI state sent
 static bool     s_was_up;
@@ -150,6 +206,7 @@ static void emit_status() {
   }
   if (s_web.length() > 0) emit("NET %s", s_web.c_str());
   emit_time();
+  emit_queue();
 }
 
 // A network name compared loosely: case, and the curly apostrophe phones put
@@ -211,6 +268,10 @@ static void scan_report_mine(int n) {
 }
 
 static void do_scan() {
+  if (s_radio_off) {
+    emit("SCAN skipped: Wi-Fi is off (WIFI ON)");
+    return;
+  }
   emit("SCAN start");
   // A scan fails (-2) while a join attempt is in progress, so pause it.
   const bool joining = WiFi.status() != WL_CONNECTED;
@@ -269,15 +330,234 @@ static void do_fetch() {
   http.end();
 }
 
+// ---- rootclock results: receive, save, upload ----
+
+static uint32_t crc32_ieee(const uint8_t *p, size_t n) {
+  uint32_t crc = 0xFFFFFFFFu;
+  for (size_t i = 0; i < n; i++) {
+    crc ^= p[i];
+    for (int k = 0; k < 8; k++) crc = (crc & 1u) ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+  }
+  return crc ^ 0xFFFFFFFFu;
+}
+
+// Saved results are /q/<6-digit order>_<game id>.json, oldest first.
+static unsigned queue_count(String *oldest = nullptr) {
+  if (!s_fs_ok) return 0;
+  File dir = LittleFS.open(QUEUE_DIR);
+  if (!dir || !dir.isDirectory()) return 0;
+  unsigned n = 0;
+  String best;
+  for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+    String name = f.name();
+    if (!name.endsWith(".json")) continue;
+    n++;
+    if (best.length() == 0 || name < best) best = name;
+  }
+  if (oldest) *oldest = best;
+  return n;
+}
+
+// Re-counts the saved results (only when they change) and reports it.
+static void emit_queue() {
+  s_queue_n = queue_count();
+  emit("QUEUE %u", s_queue_n);
+}
+
+static void fs_init() {
+  s_fs_ok = LittleFS.begin(true);  // formats the partition on first use
+  if (!s_fs_ok) {
+    emit("UPLOAD no flash filesystem: games cannot be saved");
+    return;
+  }
+  if (!LittleFS.exists(QUEUE_DIR)) LittleFS.mkdir(QUEUE_DIR);
+  if (!LittleFS.exists(BAD_DIR)) LittleFS.mkdir(BAD_DIR);
+  File dir = LittleFS.open(QUEUE_DIR);
+  for (File f = dir.openNextFile(); f; f = dir.openNextFile()) {
+    const unsigned order = (unsigned)atoi(f.name());
+    if (order >= s_seq_counter) s_seq_counter = order + 1;
+  }
+}
+
+static void radio_off() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  s_radio_off = true;
+  wifi_state("off");
+}
+
+static void radio_on() {
+  if (!s_radio_off) return;
+  s_radio_off = false;
+  WiFi.mode(WIFI_STA);
+  join();
+}
+
+static void result_line(const String &line) {
+  // RESULT BEGIN <id> <bytes> <crc> | RESULT DATA <seq> <text> | RESULT END <id>
+  const int a = line.indexOf(' ');
+  const int b = line.indexOf(' ', a + 1);
+  if (a < 0 || b < 0) return;
+  const String verb = line.substring(a + 1, b);
+  const String rest = line.substring(b + 1);
+  s_rx.last_ms = millis();
+  if (verb == "BEGIN") {
+    char id[33] = {0};
+    unsigned long bytes = 0, crc = 0;
+    if (sscanf(rest.c_str(), "%32s %lu %lx", id, &bytes, &crc) != 3) return;
+    memset(&s_rx, 0, sizeof s_rx);
+    s_rx.last_ms = millis();
+    strncpy(s_rx.id, id, sizeof s_rx.id - 1);
+    s_rx.bytes = bytes;
+    s_rx.crc = (uint32_t)crc;
+    s_rx.active = true;
+    if (bytes > RESULT_MAX) s_rx.bad = true;
+  } else if (verb == "DATA" && s_rx.active) {
+    const int sp = rest.indexOf(' ');
+    if (sp < 0) { s_rx.bad = true; return; }
+    if ((unsigned)rest.substring(0, sp).toInt() != s_rx.next_seq) s_rx.bad = true;
+    s_rx.next_seq++;
+    const String text = rest.substring(sp + 1);
+    if (s_rx.len + text.length() > RESULT_MAX) { s_rx.bad = true; return; }
+    memcpy(s_body + s_rx.len, text.c_str(), text.length());
+    s_rx.len += text.length();
+  } else if (verb == "END" && s_rx.active) {
+    s_rx.active = false;
+    const char *id = s_rx.id;
+    if (s_rx.bad) { emit("RESULT ERR %s seq", id); return; }
+    if (s_rx.len != s_rx.bytes) { emit("RESULT ERR %s len", id); return; }
+    if (crc32_ieee((const uint8_t *)s_body, s_rx.len) != s_rx.crc) {
+      emit("RESULT ERR %s crc", id);
+      return;
+    }
+#ifndef RESULTS_URL
+    emit("RESULT ERR %s nourl", id);
+    return;
+#endif
+    if (!s_fs_ok) { emit("RESULT ERR %s fs", id); return; }
+    char path[64];
+    snprintf(path, sizeof path, "%s/%06u_%s.json", QUEUE_DIR, s_seq_counter++, id);
+    File f = LittleFS.open(path, "w");
+    const bool ok = f && f.write((const uint8_t *)s_body, s_rx.len) == s_rx.len;
+    if (f) f.close();
+    if (!ok) { LittleFS.remove(path); emit("RESULT ERR %s fs", id); return; }
+    emit("RESULT QUEUED %s saved", id);
+    emit_queue();
+    s_next_try = millis();
+    s_tries = 0;
+    s_paused = false;
+    radio_on();   // a game to send needs the radio, whatever WIFI OFF said
+  }
+}
+
+// POST one saved result. Returns the HTTP status, or a negative HTTPClient
+// error when there was no answer.
+static int post_body(const char *body, size_t len) {
+#ifdef RESULTS_URL
+  const String url = RESULTS_URL;
+  WiFiClient plain;
+  WiFiClientSecure tls;
+  const bool https = url.startsWith("https://");
+  if (https) {
+#ifdef RESULTS_TLS_INSECURE
+    tls.setInsecure();
+#else
+    tls.setCACert(ROOT_CAS);
+#endif
+  }
+  HTTPClient http;
+  http.setConnectTimeout(8000);
+  http.setTimeout(10000);
+  if (!(https ? http.begin(tls, url) : http.begin(plain, url))) return HTTPC_ERROR_CONNECTION_REFUSED;
+  http.addHeader("Content-Type", "application/json");
+#ifdef RESULTS_TOKEN
+  http.addHeader("Authorization", String("Bearer ") + RESULTS_TOKEN);
+#endif
+  const int code = http.POST((uint8_t *)body, len);
+  http.end();
+  return code;
+#else
+  (void)body;
+  (void)len;
+  return HTTPC_ERROR_CONNECTION_REFUSED;
+#endif
+}
+
+static void upload_tick(uint32_t now, bool up) {
+#ifdef RESULTS_URL
+  // s_body also holds a result being received: never upload in the middle.
+  if (s_rx.active || s_queue_n == 0) return;
+  if (!up || s_paused || !s_fs_ok || (int32_t)(now - s_next_try) < 0) return;
+  // HTTPS checks certificate dates: give NTP a little time first.
+  if (String(RESULTS_URL).startsWith("https://") && time(nullptr) < 1700000000 &&
+      now - s_up_since < NTP_WAIT_MS) {
+    return;
+  }
+  String name;
+  if (queue_count(&name) == 0) return;
+  const String path = String(QUEUE_DIR) + "/" + name;
+  String id = name.substring(name.indexOf('_') + 1);
+  id.remove(id.length() - 5);  // ".json"
+  File f = LittleFS.open(path, "r");
+  const size_t len = f ? f.read((uint8_t *)s_body, RESULT_MAX) : 0;
+  if (f) f.close();
+  if (len == 0) {  // unreadable: set it aside rather than loop on it
+    LittleFS.rename(path, String(BAD_DIR) + "/" + name);
+    emit_queue();
+    return;
+  }
+  emit("UPLOAD %s try %u", id.c_str(), s_tries + 1);
+  const uint32_t t0 = millis();
+  const int code = post_body(s_body, len);
+  const uint32_t ms = millis() - t0;
+  if (code == 200 || code == 201) {
+    LittleFS.remove(path);
+    emit("RESULT OK %s %d", id.c_str(), code);
+    s_tries = 0;
+    s_next_try = millis();  // the next one, if any, at once
+  } else if (code == 401 || code == 403) {
+    emit("RESULT ERR %s %d", id.c_str(), code);
+    emit("UPLOAD refused: RESULTS_TOKEN does not match the server's INGEST_TOKEN");
+    s_paused = true;  // keep the games; a reflash with the right token sends them
+  } else if (code >= 400 && code < 500 && code != 408 && code != 429) {
+    LittleFS.rename(path, String(BAD_DIR) + "/" + name);
+    emit("RESULT ERR %s %d", id.c_str(), code);
+  } else {
+    if (code > 0) {
+      emit("RESULT QUEUED %s http%d", id.c_str(), code);
+    } else {
+      emit("UPLOAD %s failed in %lu ms: %s", id.c_str(), (unsigned long)ms,
+           HTTPClient::errorToString(code).c_str());
+      emit("RESULT QUEUED %s net", id.c_str());
+    }
+    const size_t n = sizeof RETRY_S / sizeof RETRY_S[0];
+    s_next_try = millis() + RETRY_S[s_tries < n ? s_tries : n - 1] * 1000u;
+    s_tries++;
+  }
+  emit_queue();
+#else
+  (void)now;
+  (void)up;
+#endif
+}
+
 static void handle_cmd(String cmd) {
   cmd.trim();
-  cmd.toUpperCase();
   if (cmd.length() == 0) return;
-  if (cmd == "SCAN")        do_scan();
-  else if (cmd == "FETCH")  do_fetch();
-  else if (cmd == "STATUS") emit_status();
-  else if (cmd == "HELP")   emit("HELP commands: SCAN FETCH STATUS");
-  else                      emit("ERR unknown command: %s", cmd.c_str());
+  // RESULT lines carry JSON: never change their case.
+  if (cmd.startsWith("RESULT ")) {
+    result_line(cmd);
+    return;
+  }
+  cmd.toUpperCase();
+  if (cmd == "SCAN")          do_scan();
+  else if (cmd == "FETCH")    do_fetch();
+  else if (cmd == "STATUS")   emit_status();
+  else if (cmd == "QUEUE")    emit_queue();
+  else if (cmd == "WIFI ON")  { s_wifi_wanted = true; radio_on(); s_next_try = millis(); }
+  else if (cmd == "WIFI OFF") s_wifi_wanted = false;  // loop() turns it off when idle
+  else if (cmd == "HELP")     emit("HELP commands: SCAN FETCH STATUS QUEUE WIFI ON|OFF RESULT ...");
+  else                        emit("ERR unknown command: %s", cmd.c_str());
 }
 
 static void poll_cmds(Stream &in, String &buf) {
@@ -295,6 +575,7 @@ static void poll_cmds(Stream &in, String &buf) {
 void setup() {
   Serial.begin(115200);
   Serial.setTxTimeoutMs(0);  // never stall when no PC is listening on USB
+  OG.setRxBufferSize(OG_RX_BUFFER);  // must come before begin()
   OG.begin(OG_BAUD, SERIAL_8N1, OG_RX_PIN, OG_TX_PIN);
   // Bringing the UART up can put a junk byte on the line; end it on a line
   // of its own so it does not prefix HELLO.
@@ -303,6 +584,8 @@ void setup() {
   esp_log_level_set("*", ESP_LOG_NONE);
 
   emit("HELLO %s", FW_VERSION);
+  fs_init();
+  emit_queue();
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) {
     // Every retry starts with a leave of our own; keeping only the latest
     // event would let that overwrite the reason the retry was for.
@@ -330,8 +613,10 @@ void loop() {
     wifi_state(reason_text(reason));
   }
 
-  const bool up = WiFi.status() == WL_CONNECTED;
+  const bool up = !s_radio_off && WiFi.status() == WL_CONNECTED;
   if (up && !s_was_up) {
+    s_up_since = now;
+    s_next_try = now;
     wifi_state("up");
     emit("IP %s", WiFi.localIP().toString().c_str());
     emit("RSSI %d", (int)WiFi.RSSI());
@@ -345,7 +630,14 @@ void loop() {
   // Auto-reconnect does not retry every failure, so start over if a join
   // has been going nowhere for a while. (join() sends "connecting"; if the
   // network still is not there, the next reason follows within seconds.)
-  if (!up && now - s_join_started >= REJOIN_AFTER_MS) join();
+  if (!up && !s_radio_off && now - s_join_started >= REJOIN_AFTER_MS) join();
+
+  // A result whose END never came (the FreeWili reset mid-way): forget it.
+  if (s_rx.active && now - s_rx.last_ms >= RX_STALE_MS) s_rx.active = false;
+
+  // Uploads, then WIFI OFF once there is nothing left to send.
+  upload_tick(now, up);
+  if (!s_wifi_wanted && !s_radio_off && s_queue_n == 0 && !s_rx.active) radio_off();
 
   if ((int32_t)(now - next_time) >= 0) {
     next_time = now + TIME_PERIOD_MS;

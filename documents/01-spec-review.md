@@ -14,7 +14,7 @@ these questions.
 |---|---|
 | App folder | `apps/rootclock/` |
 | Targets | `rootclock_display`, `rootclock_main` |
-| USB product strings | `FWOG display rootclock 003`, `FWOG main rootclock 003` (001 was the first MVP, 002 the next button, 003 the battery line) |
+| USB product strings | `FWOG display rootclock 004`, `FWOG main rootclock 004` (001 was the first MVP, 002 the next button, 003 the battery line, 004 the WiFi upload) |
 | Build / flash | `fw build rootclock`, `fw run rootclock` (never anything else; see `CLAUDE.md`) |
 
 ---
@@ -59,7 +59,7 @@ these questions.
 
 | ID | Requirement |
 |---|---|
-| R-EXP-1 | *(Not in the MVP)* After the game, send each player's nickname, faction, total time and the time of every turn to a mobile app through the ESP32 (the Bottlenose WiFi Orca). |
+| R-EXP-1 | After the game, send each player's nickname, faction, total time and the time of every turn to a mobile app through the ESP32 (the Bottlenose WiFi Orca). *(Built in 004: to root-metrics, see [04](04-future-esp32-integration.md).)* |
 | R-EXP-2 | The design now must let that be added later without rework. Concretely: the game data is kept in a form that can be serialised, and a payload contract exists ([04](04-future-esp32-integration.md)). |
 
 ### Requirements the BSP imposes on every app
@@ -121,6 +121,7 @@ These are not negotiable (`external/wiliOGbsp/AGENTS.md`).
 | G18 | *002:* five buttons for four players was crowded, and a wrong player button ended the wrong turn. | **One next button.** Green ends the current turn and starts the next seat's (P1 → P2 → P3 (→ P4) → P1). While paused or after the game, green cycles the player cards instead; it only changes what is shown. | User (002) |
 | G19 | *002:* what replaces the faction line on S1. | **AVG/TURN**: the average of the shown player's completed turns. The running turn is left out so the number only moves when a turn ends. The icon still shows the faction. | User (002) |
 | G20 | *003:* a battery indicator with time left, but the board has no fuel gauge (BQ27441 not fitted). | While PAUSED only: percent from the charger's battery-voltage reading through a typical Li-ion curve; time left = percent ÷ drain rate, assumed 15 %/h for the first 10 minutes on battery, then measured from the slope of the last 30 minutes. Charging and USB are shown instead of a time. | Assumed (003) |
+| G21 | *004:* how and when a result is sent, without losing it. | At GAME OVER the board asks the WiFi module to connect and shows its state; **yellow** sends. The display keeps up to 4 unsent games in RAM (also across a new game) until the module has **saved** each to its flash; the module uploads and retries until the server has it. The radio is off during play. | User request, details Assumed (004) |
 
 ### Button map (pause-menu scheme, amended in 002)
 
@@ -133,7 +134,7 @@ Actions fire on the **press** edge, so a turn switch is timestamped as early as 
 | RUNNING | — | — | **next** player | — | **pause** |
 | PAUSED | — | open settings | view next card | hold 2 s: **end game** | **resume** |
 | SETTINGS | row up | value − | done | value + | row down |
-| GAME OVER | — | — | view next card | hold 2 s: **new game** | — |
+| GAME OVER | — | **send** results (004) | view next card | hold 2 s: **new game** | — |
 | *any state* | | | | | *held 6 s: power off* |
 
 001 had one button per player while RUNNING (gray P1, yellow P2, green P3, blue P4) and the

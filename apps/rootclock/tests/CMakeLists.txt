@@ -35,7 +35,8 @@ add_library(rc_core STATIC
     ${RC_CORE}/rc_game.c
     ${RC_CORE}/rc_result.c
     ${RC_CORE}/rc_format.c
-    ${RC_CORE}/rc_battery.c)
+    ${RC_CORE}/rc_battery.c
+    ${RC_CORE}/rc_uplink.c)
 target_include_directories(rc_core PUBLIC ${RC_CORE})
 target_compile_definitions(rc_core PUBLIC HOST_TEST=1)
 
@@ -54,3 +55,6 @@ rc_add_test(test_rc_input)      # button map, holds
 rc_add_test(test_rc_game)       # state machine, invariants, AT script
 rc_add_test(test_rc_result)     # GameResult + contract v1 JSON
 rc_add_test(test_rc_battery)    # battery percent, drain rate, time left
+rc_add_test(test_rc_uplink)     # upload protocol, outbox, sender, main's bridge
+target_sources(test_rc_uplink PRIVATE ${RC_CORE}/../main/bridge.c)
+target_include_directories(test_rc_uplink PRIVATE ${RC_CORE}/../main)

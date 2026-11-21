@@ -3,7 +3,8 @@
 A chess-clock-style timer for 3–4 players. Green ends the current turn and starts the next
 player's. The board shows their turn time in large digits, their running total, their average
 turn and their faction icon. A settings page sets the number of players, a per-turn time
-limit, each player's nickname and each player's faction.
+limit, each player's nickname and each player's faction. After the game, yellow uploads the
+result through a Bottlenose WiFi Orca to [root-metrics](https://github.com/alessandrofelici/root-metrics).
 
 The full specification is in [`documents/`](../../documents/README.md) at the repo root:
 spec review, MVP and acceptance tests, object model, the future ESP32 export, and the build
@@ -29,7 +30,7 @@ screen always shows what each button currently does.
 | RUNNING | — | — | **next** player | — | **pause** |
 | PAUSED | — | settings | view next card | hold: **end game** | **resume** |
 | SETTINGS | row up | value − | done | value + | row down |
-| GAME OVER | — | — | view next card | hold: **new game** | — |
+| GAME OVER | — | **send** (004) | view next card | hold: **new game** | — |
 
 Since version 002, green is the only turn button: P1 → P2 → P3 (→ P4) → P1. While paused or
 after the game it cycles the player cards instead, without touching any clock; red resumes
@@ -63,8 +64,45 @@ the paused turn whichever card is showing.
   worked out.
 - When the game ends, the result is printed once on the display CPU's USB console as a
   `RESULT {json}` line. The JSON follows payload contract v1, in
-  [`documents/04`](../../documents/04-future-esp32-integration.md).
+  [`documents/04`](../../documents/04-future-esp32-integration.md). It is also kept for
+  upload (below).
 - Settings are **not saved** across power-off. This is an MVP limit.
+
+## Uploading results (004)
+
+With a Bottlenose WiFi Orca plugged into the breakout header, finished games go to
+root-metrics (hosted on Vercel, or Docker on your network):
+
+1. Set root-metrics up and give it an `INGEST_TOKEN` (its README: *Hosting on Vercel +
+   Supabase*, or *Docker*).
+2. Flash the Bottlenose with `apps/bottlenose/c6/bottlenose_c6` **1.3 or later**. In its
+   `secrets.h` put your Wi-Fi, `RESULTS_URL` (`https://<app>.vercel.app/api/results`) and
+   `RESULTS_TOKEN` (the same token). See `apps/bottlenose/README.md`.
+3. `fw run rootclock`.
+
+Then, at GAME OVER:
+
+- the board switches the WiFi module on and the line under the big digits says how it is
+  going: `WiFi connecting...`, then `WiFi up. Yellow: send`;
+- **yellow** sends the game: `Saving to the WiFi module...`, then
+  `1 game saved on WiFi module, uploading`, then `Uploaded to root-metrics` in green;
+- the game is on the root-metrics page.
+
+Nothing is lost when something is missing. The display keeps up to 4 finished games until the
+WiFi module confirms it saved them to its own flash (they survive starting a new game, not a
+power-off); the module keeps them through power-offs and retries until the server has them.
+If there is no Bottlenose, or it does not answer, the line says so and yellow tries again
+later. During play the module's radio is off, to save battery.
+
+Without a Bottlenose, a computer on the display's USB console can do the upload instead:
+
+```
+py apps/rootclock/tools/upload_results.py --url https://<app>.vercel.app/api/results --token <token>
+py apps/rootclock/tools/upload_results.py --url ... --token ... --watch   # every game as it ends
+```
+
+The main CPU's console (`fw console main`) shows the conversation with the module: `[c6] ...`
+for what it says, `[to c6] ...` for what is sent (`!verbose` adds every data line).
 
 ## Battery estimate
 
@@ -92,7 +130,7 @@ port at 1200 baud reboots that CPU into BOOTSEL.
 |---|---|
 | `press <gray\|yellow\|green\|blue\|red>` | inject a 100 ms tap through the real debounce/power path |
 | `hold <btn> <ms>` | inject a hold. Red is refused at 1000 ms or more. |
-| `state` | one `STATE {json}` line with the model: state, seats, clocks, averages (`avg`, -1 = none yet), settings (`players`, `limit_ms`, `nick`, `fac`), beep count, battery (`batt`: mode, mV, percent, minutes left or -1, measured) |
+| `state` | one `STATE {json}` line with the model: state, seats, clocks, averages (`avg`, -1 = none yet), settings (`players`, `limit_ms`, `nick`, `fac`), beep count, battery (`batt`: mode, mV, percent, minutes left or -1, measured), upload (`uplink`: link, main heard, C6 alive, wifi, result state, http, games waiting on the C6, games in the display's outbox, send phase) |
 | `result` | re-print the last `RESULT {json}` |
 | `reset` | a new READY game with default settings |
 
@@ -127,13 +165,19 @@ cmake --build build/rootclock-sim
 python3 apps/rootclock/tools/sim/shots.py build/rootclock-sim/rootclock_sim build/rootclock-shots
 ```
 
-`shots.py` plays a short game and saves every screen as a PNG plus `sheet.png`. The same
-`hw_check.py` runs against it through a pseudo-terminal:
+`shots.py` plays a short game and saves every screen as a PNG plus `sheet.png`. The main CPU's
+relay (`main/bridge.c`) runs inside the simulator too, and `tools/sim/fake_c6.py` plays the
+WiFi module: with `--url` and `--token` it really uploads, so a game can go all the way to a
+running root-metrics. The same `hw_check.py` runs against it through a pseudo-terminal:
 
 ```
-SIM_PTY=/tmp/rootclock-tty build/rootclock-sim/rootclock_sim &
+SIM_PTY=/tmp/rootclock-tty \
+SIM_C6="python3 apps/rootclock/tools/sim/fake_c6.py --url http://127.0.0.1:8080/api/results --token dev" \
+  build/rootclock-sim/rootclock_sim &
 python3 apps/rootclock/tools/hw_check.py --port /tmp/rootclock-tty
 ```
+
+Leave `SIM_C6` out to simulate a board with no Bottlenose.
 
 It cannot show the panel's real colours and refresh, the beep, the LED bar or power-off, so
 it does not replace a run on the board.
@@ -168,6 +212,10 @@ These are small layout choices made so that everything fits at 320 px:
 |---|---|
 | `core/` | Game logic, pure C11 with no SDK, host-testable: state machine, clocks, settings, input mapping, result JSON, battery estimate |
 | `display/battery.c` | Reads the charger into the battery estimate |
+| `display/export.c`, `common/rc_link.h` | The upload's display half: outbox, WiFi on/off, sending on yellow |
+| `core/rc_uplink.c` | Upload message formats and state machines (pure, host-tested) |
+| `main/bridge.c` | The main CPU's relay to the WiFi module (portable; the simulator runs it too) |
+| `tools/upload_results.py` | Upload from a computer on the USB console, without a Bottlenose |
 | `display/main.c` | The loop that wires `core/` to the BSP, plus the test console |
 | `display/ui_*.c`, `beeper.c` | S1 and S2 screens, the big-digit renderer, the limit beep |
 | `display/assets/faction_icons.c` | **Generated** 96×96 RGB565 icons. Regenerate with `py apps/rootclock/tools/gen_faction_icons.py` |
@@ -175,4 +223,4 @@ These are small layout choices made so that everything fits at 320 px:
 | `tests/` | Host tests for `core/`: a standalone CMake project, no SDK (see below) |
 | `tools/hw_check.py` | Unattended hardware acceptance check |
 | `tools/sim/` | The display app built for the PC: screenshots and `hw_check.py` with no board |
-| `main/main.c` | Main CPU: watchdog kick and display update, nothing app-specific yet |
+| `main/main.c` | Main CPU: watchdog, display update, UART1 to the WiFi module, the link, its USB console |
