@@ -57,4 +57,11 @@ uint32_t rc_player_turn_ms(const rc_player_t *p, uint32_t now_ms);
 /* Completed turns plus the current turn. */
 uint32_t rc_player_total_ms(const rc_player_t *p, uint32_t now_ms);
 
+/* Average duration of COMPLETED turns (the current turn is excluded, so the
+ * value is stable while a turn runs): sum of the log / number of completed
+ * turns, where the count comes from turns_started so it stays right after
+ * the log overflows. Returns false, leaving *avg_ms alone, when no turn has
+ * completed yet. */
+bool rc_player_avg_turn_ms(const rc_player_t *p, uint32_t *avg_ms);
+
 #endif

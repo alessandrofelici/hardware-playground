@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """rootclock hardware acceptance check -- runs documents/02 AT-01..AT-14 on a board.
 
+(004: AT-12U, the upload through the Bottlenose WiFi module. With no
+Bottlenose it checks that the result stays on the display instead.)
+
+(002: one green "next" button, a PLAYERS setting and average turn times.)
+
 Drives the display CPU's test console (see apps/rootclock/display/main.c) over
 USB CDC: injected button presses run through the real debounce and power path,
 and `state` reports the game model. Checks states, seats, settings, timing
@@ -18,6 +23,9 @@ SAFETY
     the board off and only a human can switch it back on.
 
 Usage:  py apps/rootclock/tools/hw_check.py [--port COMx] [--wait 60]
+With no board, the same script runs against the simulator (tools/sim):
+        SIM_PTY=/tmp/rootclock-tty <build>/rootclock_sim &
+        python3 apps/rootclock/tools/hw_check.py --port /tmp/rootclock-tty
 Exit status 0 when every check passes.
 """
 import argparse
@@ -38,6 +46,7 @@ BAUD = 115200                 # NEVER 1200
 TOL_MS = 300
 TAP_SETTLE_S = 0.25           # 100 ms injected tap + 5 ms debounce + margin
 RED_HOLD_LIMIT_MS = 1000
+APP_VERSION = "004"           # VERSION in apps/rootclock/CMakeLists.txt
 
 NICKS = ["Jacob", "Alex", "Ahmed", "Lorenzo"]
 FACTION_KEYS = ["marquise", "eyrie", "woodland", "vagabond", "riverfolk", "cult",
@@ -179,7 +188,8 @@ def check_result(c, raw, expect):
     c.ok(r.get("schema") == "rootclock.game_result", "schema")
     c.ok(r.get("schema_version") == 1, "schema_version == 1")
     c.ok(bool(re.fullmatch(r"[0-9a-f]{16}", str(r.get("game_id")))), "game_id is 16 hex")
-    c.ok(r.get("device") == {"app": "rootclock", "app_version": "001"}, "device")
+    c.ok(r.get("device") == {"app": "rootclock", "app_version": APP_VERSION},
+         f"device (app_version {APP_VERSION})")
     c.ok(r.get("ended_at") is None, "ended_at null")
     c.ok(r.get("turn_limit_ms") == expect["limit_ms"], f"turn_limit_ms == {expect['limit_ms']}")
     players = r.get("players", [])
@@ -211,20 +221,22 @@ def run(b):
     s = c.snapshot(b.state())
     c.ok(s["state"] == "READY" and s["screen"] == "S1", "READY on S1")
     c.ok(s["shown"] == 0, "shows P1")
+    c.ok(s["players"] == 4, "4 players")
     c.ok(s["nick"] == [0, 1, 2, 3], "nicknames Jacob, Alex, Ahmed, Lorenzo")
     c.ok(s["fac"] == [0, 1, 2, 3], "factions Marquise, Eyrie, Woodland, Vagabond")
     c.ok(s["global_ms"] == 0 and s["turn_ms"] == 0 and s["totals"] == [0, 0, 0, 0],
          "all clocks zero")
+    c.ok(s["avg"] == [-1, -1, -1, -1], "no averages yet")
     c.ok(s["limit_ms"] == 0, "limit off")
 
     c.at("AT-02 settings: open, move, change P2 faction to Lizard Cult")
     b.press("yellow")
     s = b.state()
     c.ok(s["state"] == "SETTINGS" and s["screen"] == "S2" and s["row"] == 0,
-         "yellow opens S2 at row 0")
-    for _ in range(4):
+         "yellow opens S2 at row 0 (PLAYERS)")
+    for _ in range(5):
         b.press("red")
-    c.ok(b.state()["row"] == 4, "red x4 -> row 4 (P2 faction)")
+    c.ok(b.state()["row"] == 5, "red x5 -> row 5 (P2 faction)")
     for _ in range(4):
         b.press("blue")
     s = b.state()
@@ -233,17 +245,21 @@ def run(b):
     c.at("AT-03 nickname swap")
     for _ in range(3):
         b.press("gray")
-    c.ok(b.state()["row"] == 1, "gray x3 -> row 1 (P1 nickname)")
+    c.ok(b.state()["row"] == 2, "gray x3 -> row 2 (P1 nickname)")
     b.press("blue")
     s = b.state()
     c.ok(s["nick"][0] == 1 and s["nick"][1] == 0, "P1 -> Alex, P2 -> Jacob (swapped)")
     c.ok(sorted(s["nick"]) == [0, 1, 2, 3], "nicknames still a permutation")
 
-    c.at("AT-04 limit 0:30, back to READY")
+    c.at("AT-04 limit 0:30 and 3 players, back to READY")
     b.press("gray")
-    c.ok(b.state()["row"] == 0, "gray -> row 0 (LIMIT)")
+    c.ok(b.state()["row"] == 1, "gray -> row 1 (LIMIT)")
     b.press("blue")
     c.ok(b.state()["limit_ms"] == 30000, "blue: Off -> 0:30")
+    b.press("gray")
+    c.ok(b.state()["row"] == 0, "gray -> row 0 (PLAYERS)")
+    b.press("blue")
+    c.ok(b.state()["players"] == 3, "blue: 4 -> 3 players")
     b.press("green")
     s = b.state()
     c.ok(s["state"] == "READY" and s["screen"] == "S1", "green returns to READY on S1")
@@ -259,15 +275,17 @@ def run(b):
     c.ok(approx(s["turn_ms"], expect), f"P1 turn {s['turn_ms']} ms ~ {expect:.0f} ms")
     c.ok(s["global_ms"] == s["turn_ms"], "global == P1 turn (only P1 has played)")
 
-    c.at("AT-06 P1's own button is a no-op")
+    c.at("AT-06 gray, yellow and blue do nothing while RUNNING")
     before = b.state()["turn_ms"]
-    b.press("gray")
+    for btn in ("gray", "yellow", "blue"):
+        b.press(btn)
     s = b.state()
-    c.ok(s["active"] == 0 and s["turn_ms"] >= before and s["turns"][0] == 1,
+    c.ok(s["state"] == "RUNNING" and s["active"] == 0 and s["turns"] == [1, 0, 0, 0]
+         and s["turn_ms"] >= before,
          f"still P1's first turn, not reset ({before} -> {s['turn_ms']} ms)")
 
-    c.at("AT-07 switch to P2: new turn from zero, P1 total kept")
-    b.press("yellow")
+    c.at("AT-07 green: P2's turn from zero, P1's total and average kept")
+    b.press("green")
     t_p2 = time.monotonic() - TAP_SETTLE_S
     s = c.snapshot(b.state())
     c.ok(s["active"] == 1 and s["turns"][1] == 1, "P2 active, first turn")
@@ -275,6 +293,8 @@ def run(b):
     c.ok(s["logged"][0] == 1, "P1's turn logged")
     p1_first = s["totals"][0]
     c.ok(p1_first > 2500, f"P1 total kept ({p1_first} ms)")
+    c.ok(s["avg"][0] == p1_first and s["avg"][1] == -1,
+         f"P1 average == its one turn ({s['avg'][0]} ms); P2 none yet")
 
     c.at("AT-08 limit: one beep and red at 0:30, keeps counting")
     time.sleep(max(0.0, 28.5 - (time.monotonic() - t_p2)))
@@ -288,38 +308,60 @@ def run(b):
     c.ok(s2["turn_ms"] > s["turn_ms"] + 1500, "still counting past the limit")
     c.ok(s2["beeps"] == 1, "beeped only once this turn")
 
-    c.at("AT-09 back to P1: white again, total resumes from the kept value")
-    b.press("gray")
+    c.at("AT-09 green twice: P3, then back to P1 (P4 sits out with 3 players)")
+    b.press("green")
     s = c.snapshot(b.state())
-    c.ok(s["active"] == 0 and s["over"] is False and s["turn_ms"] < 600,
-         "P1 active, new turn from zero, white")
-    c.ok(s["turns"][0] == 2 and s["logged"][1] == 1, "P1 second turn; P2's turn logged")
+    c.ok(s["active"] == 2 and s["over"] is False and s["turn_ms"] < 600,
+         "P3 active, new turn from zero, white")
+    time.sleep(1.0)
+    b.press("green")
+    s = c.snapshot(b.state())
+    c.ok(s["active"] == 0 and s["turns"] == [2, 1, 1, 0], "P1's second turn; P4 skipped")
+    c.ok(s["logged"] == [1, 1, 1, 0], "P2's and P3's turns logged")
     c.ok(p1_first <= s["totals"][0] <= p1_first + 600, f"P1 total {s['totals'][0]} ms")
+    c.ok(s["avg"][0] == p1_first, "P1 average unchanged by the running turn")
 
-    c.at("AT-10 pause freezes all three timers; resume continues the same turn")
+    c.at("AT-10 pause freezes every clock; green views cards; red resumes the same turn")
     b.press("red")
     s1 = b.state()
-    c.ok(s1["state"] == "PAUSED", "red pauses")
-    time.sleep(3.0)
+    c.ok(s1["state"] == "PAUSED" and s1["viewed"] == 0, "red pauses, P1's card shown")
+    bt = s1.get("batt", {})
+    c.ok(bt.get("mode") in ("battery", "charging", "usb", "unknown")
+         and 0 <= bt.get("pct", -1) <= 100,
+         f"battery reported ({bt.get('mode')}, {bt.get('mv')} mV, {bt.get('pct')} %,"
+         f" {bt.get('min')} min left)")
+    c.ok(bt.get("mode") != "unknown", "the charger answered (battery line shown on S1)")
+    seen = []
+    for _ in range(3):
+        b.press("green")
+        st = b.state()
+        seen.append(st["viewed"])
+        c.ok(st["active"] == 0, "green only views: P1 stays active")
+    c.ok(seen == [1, 2, 0], f"green cycles P2, P3, P1 ({seen})")
+    time.sleep(2.0)
     s2 = c.snapshot(b.state())
     c.ok(s2["turn_ms"] == s1["turn_ms"] and s2["totals"] == s1["totals"]
-         and s2["global_ms"] == s1["global_ms"], "turn, totals and global frozen for 3 s")
+         and s2["global_ms"] == s1["global_ms"], "turn, totals and global frozen")
+    b.press("green")
+    c.ok(b.state()["viewed"] == 1, "viewing P2 before resuming")
     b.press("red")
     s3 = b.state()
-    c.ok(s3["state"] == "RUNNING" and s3["turns"][0] == 2, "red resumes the same turn")
+    c.ok(s3["state"] == "RUNNING" and s3["active"] == 0 and s3["turns"][0] == 2,
+         "red resumes P1's same turn, whichever card was shown")
+    c.ok(s3["shown"] == 0, "S1 shows the active player again")
     c.ok(s1["turn_ms"] <= s3["turn_ms"] < s1["turn_ms"] + 600,
          f"turn continues from the frozen value ({s1['turn_ms']} -> {s3['turn_ms']} ms)")
 
-    c.at("AT-11 end game: P3 plays, pause, hold blue 2 s -> OVER + result JSON")
+    c.at("AT-11 end game: green to P2, pause, hold blue 2 s -> OVER + result JSON")
     b.press("green")
-    c.ok(b.state()["active"] == 2, "P3 active")
-    time.sleep(2.0)
+    c.ok(b.state()["active"] == 1, "P2 active")
+    time.sleep(1.0)
     b.press("red")
     b.hold("blue", 2500)
     b.drain(0.5)
     s = c.snapshot(b.state())
     c.ok(s["state"] == "OVER" and s["games_over"] == 1, "OVER, one game-over event")
-    c.ok(s["viewed"] == 2, "shows the last active player (P3)")
+    c.ok(s["viewed"] == 1, "shows the last active player (P2)")
     if not b.results:
         reply = b.cmd("result", prefixes=("RESULT", "ERR"))
         if reply.startswith("ERR"):
@@ -331,28 +373,59 @@ def run(b):
             "seats": [1, 2, 3],
             "nicks": ["Alex", "Jacob", "Ahmed"],
             "factions": ["marquise", "cult", "woodland"],
-            "turn_counts": [2, 1, 1],
+            "turn_counts": [2, 2, 1],
         })
         if r:
             c.ok(r["global_ms"] == s["global_ms"], "JSON global_ms == device global_ms")
             p2 = r["players"][1]["turns_ms"][0] if len(r["players"]) > 1 else 0
-            c.ok(p2 > 30000, f"P2's turn ({p2} ms) is past the 0:30 limit")
+            c.ok(p2 > 30000, f"P2's first turn ({p2} ms) is past the 0:30 limit")
 
-    c.at("AT-12 view each player's final card; a blue tap does not start a new game")
-    for btn, seat in (("gray", 0), ("yellow", 1), ("green", 2), ("blue", 3)):
+    c.at("AT-12 green cycles the final cards; gray and blue taps change nothing")
+    seen = []
+    for _ in range(3):
+        b.press("green")
+        seen.append(b.state()["viewed"])
+    c.ok(seen == [2, 0, 1], f"green: P3, P1, P2 ({seen})")
+    for btn in ("gray", "blue"):
         b.press(btn)
-        s = b.state()
-        c.ok(s["state"] == "OVER" and s["viewed"] == seat, f"{btn} -> P{seat + 1} card")
     s = c.snapshot(b.state())
+    c.ok(s["state"] == "OVER" and s["viewed"] == 1, "gray/blue taps: still OVER on P2")
     c.ok(s["totals"][3] == 0, "P4 never played: total 0")
+
+    c.at("AT-12U upload: yellow hands the result to the WiFi module (004)")
+    u = s["uplink"]
+    c.ok(u["outbox"] == 1, "the finished game waits in the outbox")
+    b.press("yellow")
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        u = b.state()["uplink"]
+        if u["outbox"] == 0 or u["send"] == "failed":
+            break
+        time.sleep(0.25)
+    print(f"  uplink: {u}")
+    if u["c6"]:
+        c.ok(u["outbox"] == 0 and u["res"] in ("saved", "delivered"),
+             f"the WiFi module saved it (res {u['res']})")
+        deadline = time.monotonic() + 20.0
+        while u["res"] != "delivered" and time.monotonic() < deadline:
+            time.sleep(0.5)
+            u = b.state()["uplink"]
+        c.ok(u["res"] == "delivered" and u["http"] in (200, 201),
+             f"root-metrics has it (res {u['res']}, http {u['http']}, wifi {u['wifi']})")
+    else:
+        c.ok(u["send"] == "failed" and u["outbox"] == 1,
+             "no WiFi module answering: the result stays on the display")
 
     c.at("AT-13 hold blue 2 s -> new game, settings kept")
     b.hold("blue", 2500)
     s = c.snapshot(b.state())
     c.ok(s["state"] == "READY", "READY")
     c.ok(s["totals"] == [0, 0, 0, 0] and s["turns"] == [0, 0, 0, 0], "clocks and turns reset")
-    c.ok(s["limit_ms"] == 30000 and s["nick"][0] == 1 and s["fac"][1] == 5,
-         "settings kept (0:30, P1 Alex, P2 Lizard Cult)")
+    c.ok(s["avg"] == [-1, -1, -1, -1], "averages reset")
+    c.ok(s["uplink"]["outbox"] == u["outbox"],
+         "a new game keeps any result not yet handed over")
+    c.ok(s["limit_ms"] == 30000 and s["players"] == 3 and s["nick"][0] == 1
+         and s["fac"][1] == 5, "settings kept (3 players, 0:30, P1 Alex, P2 Lizard Cult)")
 
     c.at("AT-14 quick red taps: start then pause; the board stays on")
     b.press("red")

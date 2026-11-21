@@ -31,6 +31,7 @@ void rc_settings_defaults(rc_settings_t *s) {
         RC_FACTION_MARQUISE, RC_FACTION_EYRIE,
         RC_FACTION_WOODLAND, RC_FACTION_VAGABOND,
     };
+    s->players = RC_PLAYERS_DEFAULT;
     s->limit_idx = 0u;
     for (uint8_t i = 0u; i < RC_SEATS; i++) {
         s->seat[i].nickname_id = i;            /* Jacob, Alex, Ahmed, Lorenzo */
@@ -44,6 +45,18 @@ uint32_t rc_limit_option_ms(uint8_t idx) {
 
 uint32_t rc_settings_limit_ms(const rc_settings_t *s) {
     return rc_limit_option_ms(s->limit_idx);
+}
+
+uint8_t rc_settings_players(const rc_settings_t *s) {
+    if (s->players < RC_PLAYERS_MIN) return (uint8_t)RC_PLAYERS_MIN;
+    if (s->players > RC_PLAYERS_MAX) return (uint8_t)RC_PLAYERS_MAX;
+    return s->players;
+}
+
+void rc_settings_cycle_players(rc_settings_t *s, int dir) {
+    const uint8_t span = (uint8_t)(RC_PLAYERS_MAX - RC_PLAYERS_MIN + 1u);
+    const uint8_t idx = (uint8_t)(rc_settings_players(s) - RC_PLAYERS_MIN);
+    s->players = (uint8_t)(RC_PLAYERS_MIN + rc_wrap_step(idx, dir, span));
 }
 
 void rc_settings_cycle_limit(rc_settings_t *s, int dir) {
@@ -88,6 +101,9 @@ void rc_menu_change(const rc_menu_t *m, rc_settings_t *s, int dir) {
         return;
     }
     switch (rc_menu_row_kind(m->row)) {
+    case RC_ROW_PLAYERS:
+        rc_settings_cycle_players(s, dir);
+        break;
     case RC_ROW_LIMIT:
         rc_settings_cycle_limit(s, dir);
         break;
@@ -103,15 +119,19 @@ void rc_menu_change(const rc_menu_t *m, rc_settings_t *s, int dir) {
 }
 
 rc_row_kind_t rc_menu_row_kind(uint8_t row) {
-    if (row == 0u || row >= RC_MENU_ROWS) {
-        return RC_ROW_LIMIT;   /* out of range: the seatless kind */
+    if (row == 0u) {
+        return RC_ROW_PLAYERS;
     }
-    return (row & 1u) ? RC_ROW_NICKNAME : RC_ROW_FACTION;
+    if (row < RC_MENU_FIRST_SEAT_ROW || row >= RC_MENU_ROWS) {
+        return RC_ROW_LIMIT;   /* row 1, or out of range: the seatless kind */
+    }
+    return ((row - RC_MENU_FIRST_SEAT_ROW) & 1u) ? RC_ROW_FACTION
+                                                 : RC_ROW_NICKNAME;
 }
 
 uint8_t rc_menu_row_seat(uint8_t row) {
-    if (row == 0u || row >= RC_MENU_ROWS) {
+    if (row < RC_MENU_FIRST_SEAT_ROW || row >= RC_MENU_ROWS) {
         return RC_NO_SEAT;
     }
-    return (uint8_t)((row - 1u) / 2u);
+    return (uint8_t)((row - RC_MENU_FIRST_SEAT_ROW) / 2u);
 }

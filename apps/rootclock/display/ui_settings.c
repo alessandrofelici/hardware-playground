@@ -2,7 +2,7 @@
  * documents/02 (S2 pixel table).
  *
  * Called every main-loop iteration while S2 is visible. Each row and the
- * preview keep what they last drew; with nothing changed a call formats nine
+ * preview keep what they last drew; with nothing changed a call formats ten
  * short strings, compares them and touches no SPI. Only `force` clears the
  * screen. */
 #include "ui_settings.h"
@@ -23,24 +23,26 @@
 #define TITLE_X        4u
 #define TITLE_Y        4u
 
-/* Row list 0,28,204,189: 9 rows, 21 px pitch, scale 2 (12x16 px cells).
- * 204 px is exactly 17 columns from x 0. The text band is y+3..y+19; the
- * 3 px above and 2 px below are painted separately so the selected row's
- * highlight spans the whole 21 px. A row is "<mark><label> <value>" with a
- * one-character mark (' ' or '>') -- the longest, ">P2 <Lizard Cult>", is
- * exactly 17 columns, which a two-character "> " mark would overflow. */
+/* Row list 0,28,204,190: 10 rows, 19 px pitch, scale 2 (12x16 px cells),
+ * so the last row ends at y 218, just above the hint row. 204 px is exactly
+ * 17 columns from x 0. The text band is y+2..y+18; the 2 px above and 1 px
+ * below are painted separately so the selected row's highlight spans the
+ * whole 19 px. A row is "<mark><label> <value>" with a one-character mark
+ * (' ' or '>') -- the longest, ">P2 <Lizard Cult>", is exactly 17 columns,
+ * which a two-character "> " mark would overflow. */
 #define ROW_X          0u
 #define ROW_Y0         28u
-#define ROW_PITCH      21u
+#define ROW_PITCH      19u
 #define ROW_W          204u
 #define ROW_COLS       17u
-#define ROW_TEXT_DY    3u
+#define ROW_TEXT_DY    2u
 #define ROW_TEXT_H     16u
 
-/* Preview 212,28,104,189: icon 96x96 at 216,40; nickname scale 2 under it,
- * 8 columns (96 px) at 216,144, centred in those columns. For the LIMIT row,
- * three scale-1 lines at 216,40/52/64 -- inside the icon rect, so drawing an
- * icon later covers them without a clear. */
+/* Preview 212,28,104,190: icon 96x96 at 216,40; nickname scale 2 under it,
+ * 8 columns (96 px) at 216,144, centred in those columns. For the LIMIT and
+ * PLAYERS rows, three scale-1 lines of PREV_TEXT_COLS (16 cols = 96 px) at
+ * 216,40/52/64 -- inside the icon rect, so drawing an icon later covers them
+ * without a clear, and each line is padded so one text replaces the other. */
 #define PREV_ICON_X    216u
 #define PREV_ICON_Y    40u
 #define PREV_NICK_X    216u
@@ -49,6 +51,8 @@
 #define PREV_TEXT_X    216u
 #define PREV_TEXT_Y    40u
 #define PREV_TEXT_DY   12u
+#define PREV_TEXT_COLS 16u
+#define PREV_TEXT_LINES 3u
 
 /* Hint row 0,220,320,20 on UI_BAR_BG -- same geometry as S1's. */
 #define HINT_Y         220u
@@ -154,7 +158,7 @@ static void draw_hint(void) {
 
 typedef enum {
     PREV_NONE = 0,   /* nothing drawn (screen just cleared) */
-    PREV_LIMIT,
+    PREV_TEXT,       /* the LIMIT or PLAYERS explanation      */
     PREV_SEAT
 } preview_t;
 
@@ -163,12 +167,14 @@ static text_field_t s_rows[RC_MENU_ROWS];
 static preview_t    s_prev;
 static uint16_t     s_prev_faction;   /* 0xFFFF: no icon drawn */
 static text_field_t s_prev_nick;
+static text_field_t s_prev_text[PREV_TEXT_LINES];
 
 static void invalidate_all(void) {
     memset(s_rows, 0, sizeof s_rows);
     s_prev = PREV_NONE;
     s_prev_faction = 0xFFFFu;
     memset(&s_prev_nick, 0, sizeof s_prev_nick);
+    memset(s_prev_text, 0, sizeof s_prev_text);
 }
 
 /* The value shown on `row`, e.g. "2:00", "Jacob", "Lizard Cult". */
@@ -186,6 +192,8 @@ static const char *row_value(const rc_settings_t *s, uint8_t row,
         const rc_faction_t *f = rc_faction(s->seat[seat].faction_id);
         return (f && f->short_name) ? f->short_name : "?";
     }
+    case RC_ROW_PLAYERS:
+        return rc_settings_players(s) == 3u ? "3" : "4";
     default:
         lim[0] = '\0';
         rc_fmt_limit(rc_settings_limit_ms(s), lim);
@@ -196,19 +204,30 @@ static const char *row_value(const rc_settings_t *s, uint8_t row,
 
 static void draw_row(const rc_settings_t *s, uint8_t row, bool selected) {
     char lim[RC_FMT_MAX + 1u];
-    char label[4] = "P?";
+    char seat_label[4] = "P?";
     const uint8_t seat = rc_menu_row_seat(row);
-    const bool is_limit = rc_menu_row_kind(row) == RC_ROW_LIMIT;
-    if (!is_limit && seat < RC_SEATS) label[1] = (char)('1' + seat);
+    const rc_row_kind_t kind = rc_menu_row_kind(row);
+    const char *label = seat_label;
+    if (kind == RC_ROW_PLAYERS) {
+        label = "PLAYERS";
+    } else if (kind == RC_ROW_LIMIT) {
+        label = "LIMIT";
+    } else if (seat < RC_SEATS) {
+        seat_label[1] = (char)('1' + seat);
+    }
     const char *value = row_value(s, row, lim);
 
     char buf[32];
     size_t n = str_append(buf, 0u, sizeof buf, selected ? ">" : " ");
-    n = str_append(buf, n, sizeof buf, is_limit ? "LIMIT" : label);
+    n = str_append(buf, n, sizeof buf, label);
     n = str_append(buf, n, sizeof buf, selected ? " <" : " ");
     n = str_append(buf, n, sizeof buf, value);
     if (selected) str_append(buf, n, sizeof buf, ">");
 
+    /* A seat the green button skips (P4 with 3 players) is still editable,
+       but drawn dim so it reads as sitting out. */
+    const bool sits_out = seat < RC_SEATS && seat >= rc_settings_players(s);
+    const uint16_t fg = sits_out ? UI_DIM : UI_FG;
     const uint16_t bg = selected ? UI_SEL_BG : UI_BG;
     const uint16_t y = (uint16_t)(ROW_Y0 + row * ROW_PITCH);
     text_field_t *f = &s_rows[row];
@@ -218,43 +237,70 @@ static void draw_row(const rc_settings_t *s, uint8_t row, bool selected) {
         st7789_fill_rect(ROW_X, (uint16_t)(y + ROW_TEXT_DY + ROW_TEXT_H), ROW_W,
                          ROW_PITCH - ROW_TEXT_DY - ROW_TEXT_H, bg);
     }
-    field_draw(f, ROW_X, (uint16_t)(y + ROW_TEXT_DY), ROW_COLS, 2u, buf, UI_FG,
+    field_draw(f, ROW_X, (uint16_t)(y + ROW_TEXT_DY), ROW_COLS, 2u, buf, fg,
                bg);
+}
+
+/* The PLAYERS row's explanation: the order the green button passes the
+ * turn in, e.g. "P1>P2>P3>P1". */
+static void players_lines(const rc_settings_t *s,
+                          char lines[PREV_TEXT_LINES][PREV_TEXT_COLS + 1u]) {
+    const unsigned n = rc_settings_players(s);
+    size_t pos = str_append(lines[0], 0u, PREV_TEXT_COLS + 1u, "green: next turn");
+    (void)pos;
+    pos = 0u;
+    for (unsigned i = 0u; i <= n; i++) {
+        const char seat[4] = {'P', (char)('1' + (i < n ? i : 0u)), i < n ? '>' : '\0', '\0'};
+        pos = str_append(lines[1], pos, PREV_TEXT_COLS + 1u, seat);
+    }
+    str_append(lines[2], 0u, PREV_TEXT_COLS + 1u, n < RC_SEATS ? "P4 sits out" : "");
 }
 
 static void draw_preview(const rc_settings_t *s, uint8_t sel_row) {
     uint8_t seat = RC_NO_SEAT;
-    if (sel_row < RC_MENU_ROWS && rc_menu_row_kind(sel_row) != RC_ROW_LIMIT) {
+    const rc_row_kind_t kind =
+        sel_row < RC_MENU_ROWS ? rc_menu_row_kind(sel_row) : RC_ROW_LIMIT;
+    if (kind == RC_ROW_NICKNAME || kind == RC_ROW_FACTION) {
         seat = rc_menu_row_seat(sel_row);
     }
 
     if (seat >= RC_SEATS) {
-        if (s_prev != PREV_LIMIT) {
-            if (s_prev == PREV_SEAT) {
-                st7789_fill_rect(PREV_ICON_X, PREV_ICON_Y, RC_ICON_W,
-                                 RC_ICON_H, UI_BG);
-                st7789_fill_rect(PREV_NICK_X, PREV_NICK_Y,
-                                 PREV_NICK_COLS * LCD_GLYPH_W * 2u,
-                                 LCD_GLYPH_H * 2u, UI_BG);
-            }
-            static const char *const k_lines[] = {"beep + red at",
-                                                  "limit, keeps", "counting"};
-            for (unsigned i = 0u; i < 3u; i++) {
-                lcd_text_draw(PREV_TEXT_X, (uint16_t)(PREV_TEXT_Y + i * PREV_TEXT_DY),
-                              k_lines[i], 1u, UI_FG, UI_BG);
-            }
-            s_prev = PREV_LIMIT;
+        char lines[PREV_TEXT_LINES][PREV_TEXT_COLS + 1u] = {{0}};
+        if (kind == RC_ROW_PLAYERS) {
+            players_lines(s, lines);
+        } else {
+            str_append(lines[0], 0u, sizeof lines[0], "beep + red at");
+            str_append(lines[1], 0u, sizeof lines[1], "limit, keeps");
+            str_append(lines[2], 0u, sizeof lines[2], "counting");
+        }
+        if (s_prev == PREV_SEAT) {
+            st7789_fill_rect(PREV_ICON_X, PREV_ICON_Y, RC_ICON_W, RC_ICON_H,
+                             UI_BG);
+            st7789_fill_rect(PREV_NICK_X, PREV_NICK_Y,
+                             PREV_NICK_COLS * LCD_GLYPH_W * 2u,
+                             LCD_GLYPH_H * 2u, UI_BG);
+        }
+        if (s_prev != PREV_TEXT) {
+            memset(s_prev_text, 0, sizeof s_prev_text);
             s_prev_faction = 0xFFFFu;
             memset(&s_prev_nick, 0, sizeof s_prev_nick);
         }
+        for (unsigned i = 0u; i < PREV_TEXT_LINES; i++) {
+            field_draw(&s_prev_text[i], PREV_TEXT_X,
+                       (uint16_t)(PREV_TEXT_Y + i * PREV_TEXT_DY),
+                       PREV_TEXT_COLS, 1u, lines[i], UI_FG, UI_BG);
+        }
+        s_prev = PREV_TEXT;
         return;
     }
 
     const rc_seat_cfg_t *cfg = &s->seat[seat];
     if (s_prev != PREV_SEAT || (uint16_t)cfg->faction_id != s_prev_faction) {
-        /* Also covers the LIMIT text, which lies inside the icon rect. */
+        /* Also covers the LIMIT/PLAYERS text, which lies inside the icon
+           rect. */
         draw_icon(PREV_ICON_X, PREV_ICON_Y, cfg->faction_id);
         s_prev_faction = cfg->faction_id;
+        memset(s_prev_text, 0, sizeof s_prev_text);
     }
     s_prev = PREV_SEAT;
 

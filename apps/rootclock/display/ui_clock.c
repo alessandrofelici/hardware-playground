@@ -46,7 +46,7 @@
 #define COL_X          116u
 #define NAME_Y         30u
 #define NAME_COLS      11u
-#define FACTION_Y      60u
+#define AVG_Y          60u
 #define TOTAL_Y        82u
 #define TURN_Y         104u
 #define COL_COLS       17u
@@ -68,6 +68,32 @@
 #define HINT_ITEM_GAP  12u   /* label -> next item's swatch */
 #define HINT_BAR_H     8u    /* hold progress bar, y 226..234 */
 #define HOLD_TRACK     UI_RGB(64, 64, 64)
+
+/* Battery line, PAUSED only: band 128,206 to the right edge, 13 px tall --
+ * between the big digits (they end at y 204) and the hint row (y 220).
+ * Icon: an 18x10 body with a 1 px outline and a 2x4 nub; the fill is up to
+ * 14x6 px inside it. Label: scale 1 (6x8 px cells) ending at x 316. */
+#define BATT_BAND_X    128u
+#define BATT_BAND_Y    206u
+#define BATT_BAND_H    13u
+#define BATT_RIGHT     316u
+#define BATT_ICON_Y    207u
+#define BATT_BODY_W    18u
+#define BATT_BODY_H    10u
+#define BATT_NUB_W     2u
+#define BATT_NUB_H     4u
+#define BATT_FILL_W    14u
+#define BATT_FILL_H    6u
+#define BATT_TEXT_Y    208u
+#define BATT_GAP       4u
+#define BATT_TEXT_MAX  24u
+#define BATT_EMPTY     UI_RGB(40, 40, 40)
+
+/* Upload line, GAME OVER only: scale 1 from x 4, 52 columns (312 px), in the
+ * same band as the battery line (the two never show together). */
+#define NOTE_X         4u
+#define NOTE_Y         208u
+#define NOTE_COLS      52u
 
 /* ---- Small helpers (no snprintf: cheap enough to run every iteration) ---- */
 
@@ -126,7 +152,7 @@ static void fill_minus(int32_t ax, int32_t ay, int32_t aw, int32_t ah,
 
 /* ---- Cached text field ---- */
 
-#define TF_MAX_COLS 20u
+#define TF_MAX_COLS 52u
 
 typedef struct {
     bool     valid;
@@ -199,6 +225,7 @@ typedef enum {
     HINT_RUNNING,
     HINT_PAUSED,
     HINT_OVER,
+    HINT_OVER_SEND,
     HINT_HOLD
 } hint_mode_t;
 
@@ -207,15 +234,22 @@ static const hint_item_t k_hint_ready[] = {
     {1u, {UI_BTN_YELLOW}, "settings"},
 };
 static const hint_item_t k_hint_running[] = {
+    {1u, {UI_BTN_GREEN}, "next"},
     {1u, {UI_BTN_RED}, "pause"},
 };
 static const hint_item_t k_hint_paused[] = {
     {1u, {UI_BTN_RED}, "resume"},
+    {1u, {UI_BTN_GREEN}, "view"},
     {1u, {UI_BTN_YELLOW}, "settings"},
     {1u, {UI_BTN_BLUE}, "hold: end"},
 };
 static const hint_item_t k_hint_over[] = {
-    {4u, {UI_BTN_GRAY, UI_BTN_YELLOW, UI_BTN_GREEN, UI_BTN_BLUE}, "view"},
+    {1u, {UI_BTN_GREEN}, "view"},
+    {1u, {UI_BTN_BLUE}, "hold: new game"},
+};
+static const hint_item_t k_hint_over_send[] = {
+    {1u, {UI_BTN_GREEN}, "view"},
+    {1u, {UI_BTN_YELLOW}, "send"},
     {1u, {UI_BTN_BLUE}, "hold: new game"},
 };
 static const hint_item_t k_hint_hold[] = {
@@ -280,7 +314,7 @@ static text_field_t   s_game;
 static badge_t        s_badge;
 static uint16_t       s_icon_faction;   /* 0xFFFF: icon not drawn        */
 static text_field_t   s_name;
-static text_field_t   s_faction;
+static text_field_t   s_avg;
 static text_field_t   s_total;
 static text_field_t   s_turn;
 static ui_bigdigits_t s_big;
@@ -288,18 +322,103 @@ static hint_mode_t    s_hint;
 static uint16_t       s_hold_x0;        /* progress track, HINT_HOLD only */
 static uint16_t       s_hold_w;
 static uint16_t       s_hold_drawn;     /* px of the track filled blue    */
+static struct {
+    bool     shown;
+    uint8_t  fill_px;
+    uint16_t fill_colour;
+    char     text[BATT_TEXT_MAX];
+} s_batt;                               /* the battery line as drawn      */
+static text_field_t   s_note;           /* the GAME OVER upload line      */
 
 static void invalidate_all(void) {
     memset(&s_game, 0, sizeof s_game);
     s_badge = BADGE_NONE;
     s_icon_faction = 0xFFFFu;
     memset(&s_name, 0, sizeof s_name);
-    memset(&s_faction, 0, sizeof s_faction);
+    memset(&s_avg, 0, sizeof s_avg);
     memset(&s_total, 0, sizeof s_total);
     memset(&s_turn, 0, sizeof s_turn);
     ui_bigdigits_reset(&s_big);
     s_hint = HINT_NONE;
     s_hold_x0 = s_hold_w = s_hold_drawn = 0u;
+    memset(&s_batt, 0, sizeof s_batt);
+    memset(&s_note, 0, sizeof s_note);
+}
+
+/* The GAME OVER upload line (ui_clock.h). Cleared once when it should no
+   longer show, and forgotten, because the battery line uses the same band. */
+static void draw_note(const char *text, uint16_t fg, bool show) {
+    if (!show || !text || !text[0]) {
+        if (s_note.valid) {
+            st7789_fill_rect(0u, BATT_BAND_Y, SCR_W, BATT_BAND_H, UI_BG);
+            memset(&s_note, 0, sizeof s_note);
+        }
+        return;
+    }
+    field_draw(&s_note, NOTE_X, NOTE_Y, NOTE_COLS, 1u, text, fg, UI_BG);
+}
+
+/* The PAUSED battery line (ui_clock.h). Redrawn only when its label, fill or
+   colour changes; cleared once when it should no longer show. */
+static void draw_battery(const rc_battery_view_t *v, bool show) {
+    if (!show || !v || v->mode == RC_BATT_UNKNOWN) {
+        if (s_batt.shown) {
+            st7789_fill_rect(BATT_BAND_X, BATT_BAND_Y, SCR_W - BATT_BAND_X,
+                             BATT_BAND_H, UI_BG);
+            memset(&s_batt, 0, sizeof s_batt);
+        }
+        return;
+    }
+
+    char text[BATT_TEXT_MAX];
+    size_t n = 0u;
+    if (v->mode == RC_BATT_ON_USB) {
+        n = str_append(text, 0u, sizeof text, "on USB");
+    } else {
+        n = uint_append(text, 0u, sizeof text, v->percent);
+        n = str_append(text, n, sizeof text, "%");
+        if (v->mode == RC_BATT_CHARGING) {
+            n = str_append(text, n, sizeof text, " charging");
+        } else if (v->has_estimate) {
+            char rem[8];
+            rc_battery_fmt_remaining(v->remaining_min, rem);
+            n = str_append(text, n, sizeof text, " ~");
+            n = str_append(text, n, sizeof text, rem);
+            n = str_append(text, n, sizeof text, " left");
+        }
+    }
+    const uint8_t pct = v->percent > 100u ? 100u : v->percent;
+    const uint8_t fill_px = (uint8_t)((BATT_FILL_W * pct + 50u) / 100u);
+    const uint16_t fill_colour = v->mode == RC_BATT_CHARGING ? UI_BTN_BLUE
+                                 : pct > 50u                 ? UI_BTN_GREEN
+                                 : pct > 20u                 ? UI_BTN_YELLOW
+                                                             : UI_BTN_RED;
+    if (s_batt.shown && s_batt.fill_px == fill_px &&
+        s_batt.fill_colour == fill_colour && strcmp(s_batt.text, text) == 0) {
+        return;
+    }
+
+    const unsigned text_w = lcd_text_width_px((unsigned)n, 1u);
+    const unsigned text_x = BATT_RIGHT - text_w;
+    const unsigned icon_x = text_x - BATT_GAP - BATT_NUB_W - BATT_BODY_W;
+    st7789_fill_rect(BATT_BAND_X, BATT_BAND_Y, SCR_W - BATT_BAND_X, BATT_BAND_H,
+                     UI_BG);
+    /* Body outline, nub, then empty and filled parts of the inside. */
+    st7789_fill_rect((uint16_t)icon_x, BATT_ICON_Y, BATT_BODY_W, BATT_BODY_H, UI_FG);
+    st7789_fill_rect((uint16_t)(icon_x + 1u), BATT_ICON_Y + 1u, BATT_BODY_W - 2u,
+                     BATT_BODY_H - 2u, UI_BG);
+    st7789_fill_rect((uint16_t)(icon_x + BATT_BODY_W),
+                     (uint16_t)(BATT_ICON_Y + (BATT_BODY_H - BATT_NUB_H) / 2u),
+                     BATT_NUB_W, BATT_NUB_H, UI_FG);
+    const uint16_t fx = (uint16_t)(icon_x + 2u), fy = BATT_ICON_Y + 2u;
+    st7789_fill_rect(fx, fy, BATT_FILL_W, BATT_FILL_H, BATT_EMPTY);
+    if (fill_px) st7789_fill_rect(fx, fy, fill_px, BATT_FILL_H, fill_colour);
+    lcd_text_draw((uint16_t)text_x, BATT_TEXT_Y, text, 1u, UI_FG, UI_BG);
+
+    s_batt.shown = true;
+    s_batt.fill_px = fill_px;
+    s_batt.fill_colour = fill_colour;
+    memcpy(s_batt.text, text, sizeof text);
 }
 
 static void draw_badge(badge_t b) {
@@ -339,6 +458,9 @@ static void draw_hint(hint_mode_t mode, unsigned hold_progress) {
         case HINT_OVER:
             hint_draw(k_hint_over, COUNT_OF(k_hint_over));
             break;
+        case HINT_OVER_SEND:
+            hint_draw(k_hint_over_send, COUNT_OF(k_hint_over_send));
+            break;
         case HINT_HOLD: {
             const unsigned end = hint_draw(k_hint_hold, COUNT_OF(k_hint_hold));
             const unsigned x0 = end + HINT_ITEM_GAP;
@@ -375,7 +497,8 @@ static void draw_hint(hint_mode_t mode, unsigned hold_progress) {
 }
 
 void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
-                     unsigned hold_progress, bool force) {
+                     unsigned hold_progress, const ui_clock_info_t *info,
+                     bool force) {
     if (!g) return;
 
     if (force || !s_drawn) {
@@ -415,7 +538,10 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
     switch (st) {
     case RC_STATE_RUNNING: badge = BADGE_RUNNING; hint = HINT_RUNNING; break;
     case RC_STATE_PAUSED:  badge = BADGE_PAUSED;  hint = HINT_PAUSED;  break;
-    case RC_STATE_OVER:    badge = BADGE_OVER;    hint = HINT_OVER;    break;
+    case RC_STATE_OVER:
+        badge = BADGE_OVER;
+        hint = (info && info->can_send) ? HINT_OVER_SEND : HINT_OVER;
+        break;
     default: break;
     }
     if (badge != s_badge) {
@@ -437,10 +563,21 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
     str_append(buf, n, sizeof buf, nick ? nick : "?");
     field_draw(&s_name, COL_X, NAME_Y, NAME_COLS, 3u, buf, UI_FG, UI_BG);
 
-    /* Faction short name, scale 2. */
-    const rc_faction_t *fac = rc_faction(cfg->faction_id);
-    field_draw(&s_faction, COL_X, FACTION_Y, COL_COLS, 2u,
-               (fac && fac->short_name) ? fac->short_name : "?", UI_FG, UI_BG);
+    /* "AVG/TURN MM:SS": the average completed turn, scale 2. The current
+       turn is left out, so the value only changes when a turn ends. */
+    {
+        uint32_t avg_ms = 0u;
+        n = str_append(buf, 0u, sizeof buf, "AVG/TURN ");
+        if (rc_game_avg_turn_ms(g, seat, &avg_ms)) {
+            t[0] = '\0';
+            rc_fmt_turn(avg_ms, t);
+            t[RC_FMT_MAX] = '\0';
+            str_append(buf, n, sizeof buf, t);
+        } else {
+            str_append(buf, n, sizeof buf, "--:--");
+        }
+        field_draw(&s_avg, COL_X, AVG_Y, COL_COLS, 2u, buf, UI_FG, UI_BG);
+    }
 
     /* "TOTAL H:MM:SS", scale 2. */
     const uint32_t total_ms = rc_game_total_ms(g, seat, now_ms);
@@ -481,7 +618,11 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
         big_fg = rc_game_turn_over_limit(g, now_ms) ? UI_OVER : UI_FG;
         break;
     case RC_STATE_PAUSED:
-        rc_fmt_turn(rc_game_turn_ms(g, seat, now_ms), t);
+        /* The paused turn on the active seat's card; any other card (green
+           cycles them) shows that seat's total instead. */
+        rc_fmt_turn(seat == g->active_seat ? rc_game_turn_ms(g, seat, now_ms)
+                                           : total_ms,
+                    t);
         big_fg = UI_DIM;
         break;
     case RC_STATE_OVER:
@@ -495,6 +636,15 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
     const uint8_t big_scale =
         strlen(t) <= 5u ? (uint8_t)BIG_SCALE_MMSS : (uint8_t)BIG_SCALE_HMS;
     ui_bigdigits_draw(&s_big, BIG_CX, BIG_Y, t, big_scale, big_fg, UI_BG);
+
+    /* Battery line while paused, upload line when the game is over. Hide
+       first, then draw, as they share a band. */
+    if (st != RC_STATE_PAUSED) draw_battery(NULL, false);
+    if (st != RC_STATE_OVER) draw_note(NULL, 0u, false);
+    if (st == RC_STATE_PAUSED) draw_battery(info ? info->batt : NULL, true);
+    if (st == RC_STATE_OVER) {
+        draw_note(info ? info->over_note : NULL, info ? info->over_note_fg : UI_FG, true);
+    }
 
     /* Hint row. */
     draw_hint(hold_progress > 0u ? HINT_HOLD : hint, hold_progress);

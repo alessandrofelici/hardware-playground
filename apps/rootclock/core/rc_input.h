@@ -1,13 +1,15 @@
 /* rootclock -- InputMapper: one poll of buttons -> at most one action.
  *
- * The button map (documents/01 section 3, confirmed):
+ * The button map (documents/01 section 3; amended in 002 to one "next"
+ * button):
  *
- *   state     gray      yellow         green     blue                  red
- *   READY     -         OPEN_SETTINGS  -         -                     START
- *   RUNNING   SWITCH 0  SWITCH 1       SWITCH 2  SWITCH 3              PAUSE
- *   PAUSED    -         OPEN_SETTINGS  -         hold: END_GAME        RESUME
- *   SETTINGS  MENU_UP   MENU_PREV      MENU_DONE MENU_NEXT             MENU_DOWN
- *   OVER      VIEW 0    VIEW 1         VIEW 2    VIEW 3, hold: NEW_GAME -
+ *   state     gray      yellow         green      blue            red
+ *   READY     -         OPEN_SETTINGS  -          -               START
+ *   RUNNING   -         -              NEXT       -               PAUSE
+ *   PAUSED    -         OPEN_SETTINGS  VIEW_NEXT  hold: END_GAME  RESUME
+ *   SETTINGS  MENU_UP   MENU_PREV      MENU_DONE  MENU_NEXT       MENU_DOWN
+ *   OVER      -         SEND           VIEW_NEXT  hold: NEW_GAME  -
+ *   (SEND since 004: upload the finished game through the WiFi module)
  *
  * Rules:
  *   - Taps act on the PRESS edge (b.pressed), not on release.
@@ -18,8 +20,7 @@
  *     where blue is still down and now_ms - press_ms >= RC_HOLD_MS, returning
  *     END_GAME (armed in PAUSED) or NEW_GAME (armed in OVER). It is cancelled
  *     by blue's release, by firing, or by `state` differing from the state it
- *     was armed in. A blue press in OVER returns VIEW 3 immediately AND arms
- *     the NEW_GAME hold.
+ *     was armed in. A blue tap does nothing by itself in PAUSED or OVER.
  *   - Red is never held for anything: the BSP owns red-held-6-s (power off).
  *   - A press edge returns its tap action even while a hold is armed; the
  *     hold is evaluated only when no tap action was returned this call.

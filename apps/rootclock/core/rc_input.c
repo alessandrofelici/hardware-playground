@@ -25,10 +25,12 @@ static rc_action_t rc_tap(rc_state_t state, rc_btn_t btn) {
         if (btn == RC_BTN_RED)    return rc_act(RC_ACT_START, RC_NO_SEAT);
         break;
     case RC_STATE_RUNNING:
+        if (btn == RC_BTN_GREEN)  return rc_act(RC_ACT_NEXT, RC_NO_SEAT);
         if (btn == RC_BTN_RED)    return rc_act(RC_ACT_PAUSE, RC_NO_SEAT);
-        return rc_act(RC_ACT_SWITCH, (uint8_t)btn);   /* gray..blue = 0..3 */
+        break;
     case RC_STATE_PAUSED:
         if (btn == RC_BTN_YELLOW) return rc_act(RC_ACT_OPEN_SETTINGS, RC_NO_SEAT);
+        if (btn == RC_BTN_GREEN)  return rc_act(RC_ACT_VIEW_NEXT, RC_NO_SEAT);
         if (btn == RC_BTN_RED)    return rc_act(RC_ACT_RESUME, RC_NO_SEAT);
         break;   /* blue only arms the END_GAME hold */
     case RC_STATE_SETTINGS:
@@ -42,8 +44,9 @@ static rc_action_t rc_tap(rc_state_t state, rc_btn_t btn) {
         }
         break;
     case RC_STATE_OVER:
-        if (btn != RC_BTN_RED)    return rc_act(RC_ACT_VIEW, (uint8_t)btn);
-        break;
+        if (btn == RC_BTN_YELLOW) return rc_act(RC_ACT_SEND, RC_NO_SEAT);
+        if (btn == RC_BTN_GREEN)  return rc_act(RC_ACT_VIEW_NEXT, RC_NO_SEAT);
+        break;   /* blue only arms the NEW_GAME hold */
     default:
         break;
     }

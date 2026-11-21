@@ -45,15 +45,15 @@ static void test_button_map(void) {
         { RC_STATE_READY,    RC_BTN_BLUE,   RC_ACT_NONE,          RC_NO_SEAT, false },
         { RC_STATE_READY,    RC_BTN_RED,    RC_ACT_START,         RC_NO_SEAT, false },
 
-        { RC_STATE_RUNNING,  RC_BTN_GRAY,   RC_ACT_SWITCH,        0u,         false },
-        { RC_STATE_RUNNING,  RC_BTN_YELLOW, RC_ACT_SWITCH,        1u,         false },
-        { RC_STATE_RUNNING,  RC_BTN_GREEN,  RC_ACT_SWITCH,        2u,         false },
-        { RC_STATE_RUNNING,  RC_BTN_BLUE,   RC_ACT_SWITCH,        3u,         false },
+        { RC_STATE_RUNNING,  RC_BTN_GRAY,   RC_ACT_NONE,          RC_NO_SEAT, false },
+        { RC_STATE_RUNNING,  RC_BTN_YELLOW, RC_ACT_NONE,          RC_NO_SEAT, false },
+        { RC_STATE_RUNNING,  RC_BTN_GREEN,  RC_ACT_NEXT,          RC_NO_SEAT, false },
+        { RC_STATE_RUNNING,  RC_BTN_BLUE,   RC_ACT_NONE,          RC_NO_SEAT, false },
         { RC_STATE_RUNNING,  RC_BTN_RED,    RC_ACT_PAUSE,         RC_NO_SEAT, false },
 
         { RC_STATE_PAUSED,   RC_BTN_GRAY,   RC_ACT_NONE,          RC_NO_SEAT, false },
         { RC_STATE_PAUSED,   RC_BTN_YELLOW, RC_ACT_OPEN_SETTINGS, RC_NO_SEAT, false },
-        { RC_STATE_PAUSED,   RC_BTN_GREEN,  RC_ACT_NONE,          RC_NO_SEAT, false },
+        { RC_STATE_PAUSED,   RC_BTN_GREEN,  RC_ACT_VIEW_NEXT,     RC_NO_SEAT, false },
         { RC_STATE_PAUSED,   RC_BTN_BLUE,   RC_ACT_NONE,          RC_NO_SEAT, true  },
         { RC_STATE_PAUSED,   RC_BTN_RED,    RC_ACT_RESUME,        RC_NO_SEAT, false },
 
@@ -63,10 +63,10 @@ static void test_button_map(void) {
         { RC_STATE_SETTINGS, RC_BTN_BLUE,   RC_ACT_MENU_NEXT,     RC_NO_SEAT, false },
         { RC_STATE_SETTINGS, RC_BTN_RED,    RC_ACT_MENU_DOWN,     RC_NO_SEAT, false },
 
-        { RC_STATE_OVER,     RC_BTN_GRAY,   RC_ACT_VIEW,          0u,         false },
-        { RC_STATE_OVER,     RC_BTN_YELLOW, RC_ACT_VIEW,          1u,         false },
-        { RC_STATE_OVER,     RC_BTN_GREEN,  RC_ACT_VIEW,          2u,         false },
-        { RC_STATE_OVER,     RC_BTN_BLUE,   RC_ACT_VIEW,          3u,         true  },
+        { RC_STATE_OVER,     RC_BTN_GRAY,   RC_ACT_NONE,          RC_NO_SEAT, false },
+        { RC_STATE_OVER,     RC_BTN_YELLOW, RC_ACT_SEND,          RC_NO_SEAT, false },
+        { RC_STATE_OVER,     RC_BTN_GREEN,  RC_ACT_VIEW_NEXT,     RC_NO_SEAT, false },
+        { RC_STATE_OVER,     RC_BTN_BLUE,   RC_ACT_NONE,          RC_NO_SEAT, true  },
         { RC_STATE_OVER,     RC_BTN_RED,    RC_ACT_NONE,          RC_NO_SEAT, false },
     };
     for (unsigned i = 0u; i < sizeof rows / sizeof rows[0]; i++) {
@@ -106,15 +106,16 @@ static void test_simultaneous_edges(void) {
     rc_input_t in;
 
     rc_input_init(&in);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(GRAY | GREEN, 0u), 1u),
-               RC_ACT_SWITCH, 0u);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(YELLOW | BLUE, 0u), 2u),
-               RC_ACT_SWITCH, 1u);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(GREEN | RED, 0u), 1u),
+               RC_ACT_NEXT, RC_NO_SEAT);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(BLUE | RED, 0u), 3u),
-               RC_ACT_SWITCH, 3u);
+               NONE_);   /* blue wins and has no action while running */
+    /* Gray wins and has no action, so a next press with it is swallowed. */
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(GRAY | GREEN, 0u), 2u),
+               NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING,
                             press(GRAY | YELLOW | GREEN | BLUE | RED, 0u), 4u),
-               RC_ACT_SWITCH, 0u);
+               NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_READY, press(YELLOW | RED, 0u), 5u),
                RC_ACT_OPEN_SETTINGS, RC_NO_SEAT);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_SETTINGS, press(GREEN | BLUE, 0u), 6u),
@@ -125,12 +126,12 @@ static void test_simultaneous_edges(void) {
     ASSERT_ACT(rc_input_map(&in, RC_STATE_READY, press(GREEN | RED, 0u), 7u),
                NONE_);
 
-    /* Gray beats blue in OVER: VIEW 0, and blue's edge does not arm. */
+    /* Green beats blue in OVER: VIEW_NEXT, and blue's edge does not arm. */
     rc_input_init(&in);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(GRAY | BLUE, 0u), 100u),
-               RC_ACT_VIEW, 0u);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(GREEN | BLUE, 0u), 100u),
+               RC_ACT_VIEW_NEXT, RC_NO_SEAT);
     ASSERT_TRUE(!in.hold_armed);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(GRAY | BLUE), 5000u), NONE_);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(GREEN | BLUE), 5000u), NONE_);
 
     /* Yellow beats blue in PAUSED: settings, no END_GAME hold. */
     rc_input_init(&in);
@@ -178,9 +179,8 @@ static void test_hold_new_game_across_wrap(void) {
     const uint32_t t0 = 0xFFFFFC18u;    /* 1000 ms before the uint32 wrap */
 
     rc_input_init(&in);
-    /* A blue press in OVER is VIEW 3 at once AND arms NEW_GAME. */
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, 0u), t0),
-               RC_ACT_VIEW, 3u);
+    /* A blue press in OVER does nothing at once and arms NEW_GAME. */
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, 0u), t0), NONE_);
     ASSERT_TRUE(in.hold_armed);
     ASSERT_EQ(rc_input_hold_progress(&in, RC_STATE_OVER, 0u), 50u);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(BLUE), t0 + 1999u), NONE_);
@@ -217,7 +217,7 @@ static void test_hold_cancel_release(void) {
     /* Releasing another button does not cancel it. */
     rc_input_init(&in);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, GRAY), 20000u),
-               RC_ACT_VIEW, 3u);
+               NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, release(GRAY, BLUE), 20500u),
                NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(BLUE), 22000u),
@@ -246,8 +246,7 @@ static void test_hold_cancel_state(void) {
 
     /* Armed in OVER, then READY: no NEW_GAME. */
     rc_input_init(&in);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, 0u), 1000u),
-               RC_ACT_VIEW, 3u);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, 0u), 1000u), NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_READY, held(BLUE), 3500u), NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(BLUE), 4000u), NONE_);
 }
@@ -269,11 +268,10 @@ static void test_hold_only_armed_in_paused_or_over(void) {
         RC_CONTEXT_ON_FAIL(before, "no arm in state %d", (int)states[i]);
     }
 
-    /* Blue down for P4's turn, red pauses while blue is still held: PAUSED
-     * never saw a blue press edge, so no END_GAME. */
+    /* Blue pressed during a turn (no action), red pauses while blue is still
+     * held: PAUSED never saw a blue press edge, so no END_GAME. */
     rc_input_init(&in);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(BLUE, 0u), 1000u),
-               RC_ACT_SWITCH, 3u);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(BLUE, 0u), 1000u), NONE_);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_RUNNING, press(RED, BLUE), 1200u),
                RC_ACT_PAUSE, RC_NO_SEAT);
     ASSERT_ACT(rc_input_map(&in, RC_STATE_PAUSED, held(BLUE), 5000u), NONE_);
@@ -284,14 +282,13 @@ static void test_hold_only_armed_in_paused_or_over(void) {
 static void test_tap_preempts_hold(void) {
     rc_input_t in;
 
-    /* OVER: gray while holding blue past 2 s is VIEW 0; the hold, not
+    /* OVER: green while holding blue past 2 s is VIEW_NEXT; the hold, not
      * cancelled by a tap, fires on the next call. */
     rc_input_init(&in);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, 0u), 1000u),
-               RC_ACT_VIEW, 3u);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(GRAY, BLUE), 3500u),
-               RC_ACT_VIEW, 0u);
-    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(GRAY | BLUE), 3501u),
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(BLUE, 0u), 1000u), NONE_);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, press(GREEN, BLUE), 3500u),
+               RC_ACT_VIEW_NEXT, RC_NO_SEAT);
+    ASSERT_ACT(rc_input_map(&in, RC_STATE_OVER, held(GREEN | BLUE), 3501u),
                RC_ACT_NEW_GAME, RC_NO_SEAT);
 
     /* PAUSED: red while holding blue past 2 s is RESUME, not END_GAME; the

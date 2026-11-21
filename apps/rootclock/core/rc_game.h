@@ -3,10 +3,18 @@
  * Transitions (documents/03 state diagram):
  *   READY    --START-->          RUNNING  (seat 0 begins its turn)
  *   READY    --OPEN_SETTINGS-->  SETTINGS (return_state = READY, menu row 0)
+ *   RUNNING  --NEXT-->           RUNNING  (active ends its turn, the next seat
+ *                                          in the rotation begins one; see
+ *                                          rc_game_next_seat)
  *   RUNNING  --SWITCH s-->       RUNNING  (active ends its turn, s begins one;
- *                                          s == active is a no-op)
- *   RUNNING  --PAUSE-->          PAUSED   (active turn stops, not ended)
- *   PAUSED   --RESUME-->         RUNNING  (same turn continues)
+ *                                          s == active is a no-op. API only)
+ *   RUNNING  --PAUSE-->          PAUSED   (active turn stops, not ended;
+ *                                          viewed_seat = active_seat)
+ *   PAUSED   --VIEW_NEXT-->      PAUSED   (viewed_seat = next seat: view only,
+ *                                          no clock changes)
+ *   PAUSED   --RESUME-->         RUNNING  (the PAUSED turn continues, whatever
+ *                                          card was being viewed;
+ *                                          viewed_seat = active_seat)
  *   PAUSED   --OPEN_SETTINGS-->  SETTINGS (return_state = PAUSED, menu row 0)
  *   SETTINGS --MENU_UP/DOWN-->   SETTINGS (cursor)
  *   SETTINGS --MENU_PREV/NEXT--> SETTINGS (value -/+ on the cursor row)
@@ -14,7 +22,10 @@
  *   PAUSED   --END_GAME-->       OVER     (active turn ended and logged;
  *                                          viewed_seat = last active;
  *                                          returns RC_EVT_GAME_OVER)
- *   OVER     --VIEW s-->         OVER     (viewed_seat = s)
+ *   OVER     --VIEW_NEXT-->      OVER     (viewed_seat = next seat)
+ *   OVER     --VIEW s-->         OVER     (viewed_seat = s. API only)
+ *   OVER     --SEND-->           OVER     (nothing changes; returns
+ *                                          RC_EVT_SEND for the uplink)
  *   OVER     --NEW_GAME-->       READY    (clocks and logs zeroed, settings
  *                                          kept, game_seq++)
  * Any action not listed for the current state is ignored (returns NONE and
@@ -62,9 +73,18 @@ uint32_t rc_game_total_ms(const rc_game_t *g, uint8_t seat, uint32_t now_ms);
  * construction). */
 uint32_t rc_game_global_ms(const rc_game_t *g, uint32_t now_ms);
 
-/* The seat S1 shows: READY -> 0; RUNNING/PAUSED -> active_seat;
+/* The seat after `seat` in the rotation of rc_settings_players() seats:
+ * seat + 1, wrapping to 0 after the last player. A seat outside the rotation
+ * (e.g. P4 after the count dropped to 3, or RC_NO_SEAT) also goes to 0. */
+uint8_t rc_game_next_seat(const rc_game_t *g, uint8_t seat);
+
+/* The seat S1 shows: READY -> 0; RUNNING -> active_seat; PAUSED -> viewed_seat;
  * OVER -> viewed_seat; SETTINGS -> the seat S1 would show in return_state. */
 uint8_t rc_game_shown_seat(const rc_game_t *g);
+
+/* Average completed-turn time for `seat` (rc_player_avg_turn_ms). False when
+ * the seat has no completed turn or is out of range. */
+bool rc_game_avg_turn_ms(const rc_game_t *g, uint8_t seat, uint32_t *avg_ms);
 
 /* Red digits: the active seat is in a turn and that turn is at or past a
  * non-zero limit (rc_alarm_over). False in READY and OVER. */
