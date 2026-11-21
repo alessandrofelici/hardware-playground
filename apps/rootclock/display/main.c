@@ -133,14 +133,20 @@ static void print_state(uint32_t now) {
     const uint8_t active = g->active_seat;
     const uint32_t turn = (active < RC_SEATS) ? rc_game_turn_ms(g, active, now) : 0u;
     uint32_t totals[RC_SEATS];
-    for (uint8_t i = 0; i < RC_SEATS; i++) totals[i] = rc_game_total_ms(g, i, now);
+    long avg[RC_SEATS];             /* -1: no completed turn yet */
+    for (uint8_t i = 0; i < RC_SEATS; i++) {
+        totals[i] = rc_game_total_ms(g, i, now);
+        uint32_t a = 0u;
+        avg[i] = rc_game_avg_turn_ms(g, i, &a) ? (long)a : -1L;
+    }
     const uint32_t global = rc_game_global_ms(g, now);
 
     DIAG("STATE {\"app\":\"rootclock\",\"state\":\"%s\",\"screen\":\"%s\","
          "\"active\":%d,\"viewed\":%d,\"shown\":%u,\"turn_ms\":%lu,"
          "\"totals\":[%lu,%lu,%lu,%lu],\"global_ms\":%lu,"
          "\"turns\":[%u,%u,%u,%u],\"logged\":[%u,%u,%u,%u],"
-         "\"over\":%s,\"limit_ms\":%lu,\"row\":%u,"
+         "\"avg\":[%ld,%ld,%ld,%ld],"
+         "\"over\":%s,\"limit_ms\":%lu,\"players\":%u,\"row\":%u,"
          "\"nick\":[%u,%u,%u,%u],\"fac\":[%u,%u,%u,%u],"
          "\"hold\":%u,\"beeps\":%lu,\"games_over\":%lu,\"inject\":%s}\n",
          state_name(g->state), g->state == RC_STATE_SETTINGS ? "S2" : "S1",
@@ -154,8 +160,10 @@ static void print_state(uint32_t now) {
          (unsigned)g->players[2].turns_started, (unsigned)g->players[3].turns_started,
          (unsigned)g->players[0].log.count, (unsigned)g->players[1].log.count,
          (unsigned)g->players[2].log.count, (unsigned)g->players[3].log.count,
+         avg[0], avg[1], avg[2], avg[3],
          rc_game_turn_over_limit(g, now) ? "true" : "false",
-         (unsigned long)rc_settings_limit_ms(&g->settings), (unsigned)g->menu.row,
+         (unsigned long)rc_settings_limit_ms(&g->settings),
+         (unsigned)rc_settings_players(&g->settings), (unsigned)g->menu.row,
          (unsigned)g->settings.seat[0].nickname_id, (unsigned)g->settings.seat[1].nickname_id,
          (unsigned)g->settings.seat[2].nickname_id, (unsigned)g->settings.seat[3].nickname_id,
          (unsigned)g->settings.seat[0].faction_id, (unsigned)g->settings.seat[1].faction_id,
