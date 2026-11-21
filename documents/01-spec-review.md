@@ -14,7 +14,7 @@ these questions.
 |---|---|
 | App folder | `apps/rootclock/` |
 | Targets | `rootclock_display`, `rootclock_main` |
-| USB product strings | `FWOG display rootclock 001`, `FWOG main rootclock 001` |
+| USB product strings | `FWOG display rootclock 002`, `FWOG main rootclock 002` (001 was the first MVP) |
 | Build / flash | `fw build rootclock`, `fw run rootclock` (never anything else; see `CLAUDE.md`) |
 
 ---
@@ -25,7 +25,7 @@ these questions.
 
 | ID | Requirement |
 |---|---|
-| R-BTN-1 | A specific button switches the game clock to player 1, 2, 3 or 4. |
+| R-BTN-1 | A specific button switches the game clock to player 1, 2, 3 or 4. *(Amended in 002: one green **next** button passes the turn to the next player in seat order.)* |
 | R-BTN-2 | Another button pauses and starts the clock. |
 | R-BTN-3 | One button ends the global timer, which ends the game. |
 | R-BTN-4 | One button opens settings. |
@@ -106,20 +106,22 @@ These are not negotiable (`external/wiliOGbsp/AGENTS.md`).
 | G3 | "Time limit" could mean per turn or per total. | **Per turn.** At the limit: one beep, and the big turn digits turn red. **The timer keeps counting** past the limit. | User |
 | G4 | Does the global timer run while paused? | **No.** Pause freezes the turn timer, the player's total and the global timer, so global time = play time = Σ player totals. | User |
 | G5 | What "start" means. | At power-on the app is READY with all clocks at zero. Red starts the game with **player 1's** turn. | Assumed |
-| G6 | Pressing the button of the player who is already active. | Does nothing, so a turn cannot be reset by accident. | Assumed |
+| G6 | Pressing the button of the player who is already active. | Does nothing, so a turn cannot be reset by accident. *002: moot, there are no per-player buttons; green always passes to a different seat.* | Assumed |
 | G7 | Pausing in the middle of a turn. | Resume continues the **same** turn. It does not start a new turn entry. | Assumed |
-| G8 | 3 vs 4 players. | There is no setting for it. A seat that never takes a turn is simply absent from the results. | Assumed |
+| G8 | 3 vs 4 players. | *002:* a **PLAYERS** setting (3 or 4, default 4) sets how many seats green rotates through. A seat outside the rotation never takes a turn, so it is absent from the results. | User (002) |
 | G9 | Two players with the same nickname. | Nicknames are unique. Choosing a name another seat holds **swaps** the two. Defaults: P1 Jacob, P2 Alex, P3 Ahmed, P4 Lorenzo. | Assumed |
 | G10 | Which factions are offered, and must they be unique. | The 13 supplied icons. Not unique, since Root allows two Vagabonds. Defaults: P1 Marquise, P2 Eyrie, P3 Woodland, P4 Vagabond. | Assumed |
-| G11 | What happens after the game ends. | GAME OVER: the clocks freeze. The four player buttons show each player's final card. Holding blue 2 s starts a new game, keeping the settings. | Assumed |
+| G11 | What happens after the game ends. | GAME OVER: the clocks freeze. Green cycles through each player's final card (002; in 001 each player button showed its own). Holding blue 2 s starts a new game, keeping the settings. | Assumed |
 | G12 | When settings can be opened. | Only from READY or PAUSED, never while a clock is running. This follows from G1. | User (via G1) |
 | G13 | The time limit is changed in the middle of a turn. | If the current turn is already past the new limit, the digits turn red immediately, without a beep. | Assumed |
 | G14 | A turn longer than 99:59. | The big timer switches from `MM:SS` (scale 8) to `H:MM:SS` (scale 6). | Technical |
 | G15 | Settings persistence. | Not in the MVP. Settings return to their defaults after power-off. | Assumed |
 | G16 | Very long games. | At most 128 recorded turns per player. Further turns are added to the last slot and `turns_truncated` is set, so total = Σ turns still holds. | Assumed |
 | G17 | Large digits, beep and icons are not provided by the BSP. | App-side renderer, tone synthesis and icon generator (§2). | Technical |
+| G18 | *002:* five buttons for four players was crowded, and a wrong player button ended the wrong turn. | **One next button.** Green ends the current turn and starts the next seat's (P1 → P2 → P3 (→ P4) → P1). While paused or after the game, green cycles the player cards instead; it only changes what is shown. | User (002) |
+| G19 | *002:* what replaces the faction line on S1. | **AVG/TURN**: the average of the shown player's completed turns. The running turn is left out so the number only moves when a turn ends. The icon still shows the faction. | User (002) |
 
-### Button map (pause-menu scheme)
+### Button map (pause-menu scheme, amended in 002)
 
 Actions fire on the **press** edge, so a turn switch is timestamped as early as possible
 (about 5 ms of debounce latency). A "hold" is measured from that same press edge.
@@ -127,11 +129,14 @@ Actions fire on the **press** edge, so a turn switch is timestamped as early as 
 | State | Gray | Yellow | Green | Blue | Red |
 |---|---|---|---|---|---|
 | READY | — | open settings | — | — | **start** (P1's turn) |
-| RUNNING | player 1 | player 2 | player 3 | player 4 | **pause** |
-| PAUSED | — | open settings | — | hold 2 s: **end game** | **resume** |
+| RUNNING | — | — | **next** player | — | **pause** |
+| PAUSED | — | open settings | view next card | hold 2 s: **end game** | **resume** |
 | SETTINGS | row up | value − | done | value + | row down |
-| GAME OVER | view P1 | view P2 | view P3 | view P4 · hold 2 s: **new game** | — |
+| GAME OVER | — | — | view next card | hold 2 s: **new game** | — |
 | *any state* | | | | | *held 6 s: power off* |
+
+001 had one button per player while RUNNING (gray P1, yellow P2, green P3, blue P4) and the
+same four buttons viewed each card in GAME OVER. 002 replaced both with green.
 
 - In SETTINGS the row-and-value keys follow the BSP's recommended arrow-pad layout: green is
   select/OK, yellow left, blue right, gray up, red down.
@@ -142,14 +147,14 @@ Actions fire on the **press** edge, so a turn switch is timestamped as early as 
 
 ## 4. Timer semantics (normative)
 
-1. **Turn timer.** It starts at `00:00` when a player's turn begins, either by their button or
+1. **Turn timer.** It starts at `00:00` when a player's turn begins, either by green (next) or
    by START for P1, and counts up while RUNNING.
 2. **Player total.** This is the sum of the player's completed turns plus the running turn.
    It never resets during a game.
 3. **Global timer.** It counts whenever any turn is running. It is derived from the same
    timestamps as the turns, so `global == Σ totals` exactly, to the millisecond.
 4. **Turn record.** When a turn ends, its duration (paused time excluded) is appended to that
-   player's turn log. A turn ends when another player's button is pressed or the game ends.
+   player's turn log. A turn ends when green passes it to the next player or the game ends.
 5. **Pause.** It freezes all three timers. Resume continues the same turn.
 6. **Time limit.** It is per turn and set in settings: Off, 0:30, 1:00, 1:30, 2:00, 3:00, 4:00,
    5:00, 7:00, 10:00 or 15:00.

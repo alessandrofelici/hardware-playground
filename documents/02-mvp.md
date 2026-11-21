@@ -8,7 +8,8 @@ you can perform on the board to show the feature works.
 
 A FreeWili OG that keeps time for a 3–4 player board game:
 
-- one button per player starts that player's turn;
+- one green **next** button ends the current turn and starts the next player's (002; 001 had
+  one button per player);
 - red pauses and resumes the clock;
 - each player's turn time, total time and faction icon are shown on their clock screen;
 - a settings page sets a per-turn time limit, each player's faction and each player's
@@ -18,7 +19,7 @@ A FreeWili OG that keeps time for a 3–4 player board game:
 
 | # | Feature | Requirement |
 |---|---|---|
-| F1 | Gray/yellow/green/blue switch the clock to player 1/2/3/4 | R-BTN-1 |
+| F1 | Green passes the turn to the next player: P1 → P2 → P3 (→ P4) → P1 *(002; 001 had gray/yellow/green/blue for P1–P4)* | R-BTN-1 |
 | F2 | Red starts the game, pauses it and resumes it | R-BTN-2 |
 | F3 | Holding blue for 2 s while paused ends the game and freezes every clock | R-BTN-3 |
 | F4 | Yellow opens settings while the game is READY or PAUSED | R-BTN-4 |
@@ -31,6 +32,9 @@ A FreeWili OG that keeps time for a 3–4 player board game:
 | F11 | S1, the player clock screen | R-SCR-1 |
 | F12 | S2, the settings screen | R-SCR-2 |
 | F13 | The BSP rules: red held 6 s powers off, the main CPU watchdog is kicked, VERSION/DESCRIPTION are set | R-SYS-1..4 |
+| F14 | *(002)* A PLAYERS setting, 3 or 4, sets the rotation; a seat outside it is dimmed in S2 and never plays | G8 |
+| F15 | *(002)* S1 shows the shown player's average completed turn (`AVG/TURN`) | G19 |
+| F16 | *(002)* While paused, green cycles through the player cards without touching any clock | G18 |
 
 ## Out of scope
 
@@ -38,7 +42,6 @@ A FreeWili OG that keeps time for a 3–4 player board game:
 - Saving settings across power-off.
 - LED-bar effects beyond the BSP's power-off countdown.
 - A results or summary screen. GAME OVER reuses S1.
-- A player-count setting. A seat that never takes a turn simply does not appear.
 - Sound beyond the single time-limit beep.
 - Undo, or editing turn times.
 
@@ -50,10 +53,10 @@ Actions fire when the button is pressed. "Hold" means held for 2 s, timed from t
 | State | Gray | Yellow | Green | Blue | Red |
 |---|---|---|---|---|---|
 | READY | — | settings | — | — | start (P1) |
-| RUNNING | P1 | P2 | P3 | P4 | pause |
-| PAUSED | — | settings | — | hold: end game | resume |
+| RUNNING | — | — | next player | — | pause |
+| PAUSED | — | settings | view next card | hold: end game | resume |
 | SETTINGS | row up | value − | done | value + | row down |
-| GAME OVER | view P1 | view P2 | view P3 | view P4 / hold: new game | — |
+| GAME OVER | — | — | view next card | hold: new game | — |
 
 Holding red for 6 s powers the board off from any state.
 
@@ -73,7 +76,7 @@ character, scale 3 is 18×24 px. The big digits are drawn by the app at scale 8,
 | GAME 0:42:17                         [RUNNING]   |  top bar, scale 2
 +------------+-------------------------------------+
 |  +------+  | P2 Alex                             |  scale 3
-|  |      |  | Eyrie                               |  scale 2
+|  |      |  | AVG/TURN 01:40                      |  scale 2
 |  | icon |  | TOTAL 0:12:31                       |  scale 2
 |  | 96px |  | TURN 5   LIM 2:00                   |  scale 2
 |  +------+  |                                     |
@@ -82,7 +85,7 @@ character, scale 3 is 18×24 px. The big digits are drawn by the app at scale 8,
 |                 0 1 : 2 3                        |  big turn timer, white -> red
 |                                                  |
 +--------------------------------------------------+
-| [R] pause                                        |  hint row: colour swatch + label
+| [G] next  [R] pause                              |  hint row: colour swatch + label
 +--------------------------------------------------+
 ```
 
@@ -91,7 +94,7 @@ character, scale 3 is 18×24 px. The big digits are drawn by the app at scale 8,
 | Top bar | 0, 0, 320, 24 | `GAME H:MM:SS` on the left. A state badge on the right: READY, RUNNING (green), PAUSED (yellow) or GAME OVER (red). |
 | Icon tile | 8, 30, 96, 96 | The faction icon on a light tile. |
 | Name | 116, 30 | `P<seat> <nickname>`, scale 3 |
-| Faction | 116, 60 | The faction's short name, scale 2 |
+| Average | 116, 60 | `AVG/TURN MM:SS`: the shown player's average completed turn, or `AVG/TURN --:--` before their first turn ends, scale 2 *(002; 001 showed the faction's short name here)* |
 | Total | 116, 82 | `TOTAL H:MM:SS`, scale 2 |
 | Turn info | 116, 104 | `TURN <n>  LIM <m:ss>`, or `LIM off`, scale 2 |
 | Big timer | 40, 140, 240, 64 | `MM:SS` at scale 8. From 100 minutes it becomes `H:MM:SS` at scale 6 (252 px wide). |
@@ -102,9 +105,9 @@ How S1 looks in each state:
 | State | Shown player | Big timer | Hint row |
 |---|---|---|---|
 | READY | P1, the player who will start | `00:00`, white | `[R] start  [Y] settings` |
-| RUNNING | The active player | That player's current turn, counting; red once past the limit | `[R] pause` |
-| PAUSED | The active player | Frozen and drawn dim gray | `[R] resume  [Y] settings  [B] hold: end` |
-| GAME OVER | The last active player, or the one picked with a player button | That player's **total**, frozen | `[Gy][Y][G][B] view  [B] hold: new game` |
+| RUNNING | The active player | That player's current turn, counting; red once past the limit | `[G] next  [R] pause` |
+| PAUSED | The active player, then each next player as green is pressed | The active player's frozen turn; another player's card shows their **total**. Dim gray either way. | `[R] resume  [G] view  [Y] settings  [B] hold: end` (scale 1) |
+| GAME OVER | The last active player, then each next player as green is pressed | That player's **total**, frozen | `[G] view  [B] hold: new game` |
 
 While blue is being held toward a hold action, the hint row reads `keep holding...`. Letting
 go before 2 s cancels.
@@ -115,6 +118,7 @@ go before 2 s cancels.
 +--------------------------------------------------+
 | SETTINGS                                         |  title bar, scale 2
 +-------------------------------+------------------+
+|   PLAYERS 4                   |                  |
 |   LIMIT 2:00                  |   +----------+   |
 | > P1 <Jacob>                  |   |  icon of |   |  selected row: highlighted,
 |   P1 Marquise                 |   |  selected|   |  value in < >
@@ -122,7 +126,7 @@ go before 2 s cancels.
 |   P2 Eyrie                    |   +----------+   |
 |   P3 Ahmed                    |     Jacob        |  preview panel
 |   P3 Woodland                 |                  |
-|   P4 Lorenzo                  |                  |
+|   P4 Lorenzo                  |                  |  (dim with PLAYERS 3)
 |   P4 Vagabond                 |                  |
 +-------------------------------+------------------+
 | [Gy] up [R] dn [Y] - [B] + [G] done              |  hint row
@@ -132,12 +136,13 @@ go before 2 s cancels.
 | Region | x, y, w, h | Content |
 |---|---|---|
 | Title bar | 0, 0, 320, 24 | `SETTINGS` |
-| Row list | 0, 28, 204, 189 | 9 rows, 21 px apart, scale 2. The selected row is highlighted, starts with `>`, and shows its value as `<value>`. |
-| Preview | 212, 28, 104, 189 | The selected seat's faction icon (96×96) with its nickname underneath. When the LIMIT row is selected it shows the limit explanation instead. |
+| Row list | 0, 28, 204, 190 | 10 rows, 19 px apart, scale 2 *(001: 9 rows, 21 px)*. The selected row is highlighted, starts with `>`, and shows its value as `<value>`. The rows of a seat outside the rotation (P4 with 3 players) are dim gray. |
+| Preview | 212, 28, 104, 190 | The selected seat's faction icon (96×96) with its nickname underneath. The LIMIT row shows the limit explanation instead, and the PLAYERS row shows the rotation (`green: next turn` / `P1>P2>P3>P1` / `P4 sits out`). |
 | Hint row | 0, 220, 320, 20 | The arrow-pad labels |
 
 What each row cycles through (values wrap around):
 
+- **PLAYERS:** 3, 4 (default 4).
 - **LIMIT:** Off, 0:30, 1:00, 1:30, 2:00, 3:00, 4:00, 5:00, 7:00, 10:00, 15:00.
 - **Nickname rows:** Jacob, Alex, Ahmed, Lorenzo. A name already held by another seat is
   swapped with that seat.
@@ -156,21 +161,24 @@ terminal for AT-11. Each test is one step of a continuous demo, in order.
 
 | AT | Steps | Expected | Covers |
 |---|---|---|---|
-| AT-01 | Flash, and wait for boot. | S1 shows READY: `GAME 0:00:00`, P1 Jacob, the Marquise icon, `00:00` in white, `TOTAL 0:00:00`, and the hint row `[R] start  [Y] settings`. | F11, F13 |
-| AT-02 | Yellow, then red ×4 to reach `P2 Eyrie`, then blue until it reads `Lizard Cult`. | S2 opens, the cursor moves, the value cycles, and the preview shows the Lizard Cult icon. | F4, F9, F12 |
+| AT-01 | Flash, and wait for boot. | S1 shows READY: `GAME 0:00:00`, P1 Jacob, the Marquise icon, `AVG/TURN --:--`, `00:00` in white, `TOTAL 0:00:00`, and the hint row `[R] start  [Y] settings`. | F11, F13, F15 |
+| AT-02 | Yellow, then red ×5 to reach `P2 Eyrie`, then blue until it reads `Lizard Cult`. | S2 opens on PLAYERS, the cursor moves, the value cycles, and the preview shows the Lizard Cult icon. | F4, F9, F12 |
 | AT-03 | Gray ×3 to reach `P1 Jacob`, then blue once. | P1 becomes `Alex` and P2 becomes `Jacob` (swap). | F10 |
-| AT-04 | Gray to reach LIMIT, then blue until it reads `0:30`. Then green. | Back to READY. The turn-info line reads `LIM 0:30`. | F8, F12 |
+| AT-04 | Gray to reach LIMIT, then blue until it reads `0:30`. Gray to PLAYERS, blue once (3). Then green. | The P4 rows turn dim. Back to READY. The turn-info line reads `LIM 0:30`. | F8, F12, F14 |
 | AT-05 | Red. | RUNNING. P1's big timer counts up from `00:00`, and GAME counts up with it. | F2, F5, F7 |
-| AT-06 | At ~0:10 press gray (P1's own button). | Nothing resets. The timer keeps counting. | F1 |
-| AT-07 | At ~0:15 press yellow. | S1 switches to P2 (now named Jacob) with the Lizard Cult icon. The big timer restarts at `00:00`. | F1, F5, F9 |
+| AT-06 | At ~0:10 press gray, yellow and blue. | Nothing changes. P1's turn keeps counting. | F1 |
+| AT-07 | At ~0:15 press green. | S1 switches to P2 (now named Jacob) with the Lizard Cult icon. The big timer restarts at `00:00`. P1's average is its one turn. | F1, F5, F9, F15 |
 | AT-08 | Wait past 0:30 on P2's turn. | At `00:30`, one beep. The digits turn red and keep counting (`00:31`, `00:32`, ...). | F8 |
-| AT-09 | Press gray. | P1's card shows `00:00` in white. `TOTAL` shows ~0:15 and grows. | F5, F6, F8 |
-| AT-10 | Red. Wait 10 s. Red again. | PAUSED: all three numbers stay frozen for the 10 s and the hint row shows resume/settings/end. After resume, the same turn continues from the frozen value. | F2, F7 |
-| AT-11 | Press green (P3), wait a few seconds, then red to pause. Hold blue 2 s. | GAME OVER. GAME stops. The console prints one result JSON line ([04](04-future-esp32-integration.md) schema) with 3 players, no P4 entry, each `total_ms` equal to the sum of its `turns_ms`, and `global_ms` equal to the sum of the totals. | F3, F7, R-EXP-2 |
-| AT-12 | Press gray, yellow, green and blue in turn. | Each shows that player's final card with their total in the big digits. Blue (P4, never played) shows `00:00`. | F3, F11 |
-| AT-13 | Hold blue 2 s. | READY again. All clocks are zero and the settings from AT-02..04 are kept. | F3 |
+| AT-09 | Green, wait 1 s, green. | P3's turn, white, then P1's second turn: P4 is skipped with 3 players. P1's `TOTAL` resumes from ~0:15 and grows; its average does not move. | F1, F5, F6, F8, F14 |
+| AT-10 | Red. Green ×3, wait, green, then red. | PAUSED: green shows P2, P3, P1 in turn while every number stays frozen. Red resumes P1's same turn even though P2's card was showing. | F2, F7, F16 |
+| AT-11 | Green (P2), wait a second, red to pause, hold blue 2 s. | GAME OVER. GAME stops. The console prints one result JSON line ([04](04-future-esp32-integration.md) schema) with 3 players, no P4 entry, `app_version` `002`, each `total_ms` equal to the sum of its `turns_ms`, and `global_ms` equal to the sum of the totals. | F3, F7, R-EXP-2 |
+| AT-12 | Green ×3, then gray, yellow and blue taps. | Green shows P3, P1, P2 with their totals in the big digits. The other taps change nothing. | F3, F11 |
+| AT-13 | Hold blue 2 s. | READY again. All clocks and averages are zero and the settings from AT-02..04 are kept (3 players). | F3 |
 | AT-14 | Red (start), then tap red quickly. | The game pauses. The LED bar flickers one red pixel and restores. The board stays on. | F13 |
 | AT-15 | Hold red 6 s. | The LED-bar countdown fills and the board powers off. Holding gray powers it back on, to READY with default settings (expected in the MVP). | F13 |
+
+`hw_check.py` runs AT-01…AT-14 against the board, or against the simulator in
+`apps/rootclock/tools/sim/` when no board is available.
 
 ### Verification hook
 

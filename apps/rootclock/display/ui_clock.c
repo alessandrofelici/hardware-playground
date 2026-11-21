@@ -46,7 +46,7 @@
 #define COL_X          116u
 #define NAME_Y         30u
 #define NAME_COLS      11u
-#define FACTION_Y      60u
+#define AVG_Y          60u
 #define TOTAL_Y        82u
 #define TURN_Y         104u
 #define COL_COLS       17u
@@ -207,15 +207,17 @@ static const hint_item_t k_hint_ready[] = {
     {1u, {UI_BTN_YELLOW}, "settings"},
 };
 static const hint_item_t k_hint_running[] = {
+    {1u, {UI_BTN_GREEN}, "next"},
     {1u, {UI_BTN_RED}, "pause"},
 };
 static const hint_item_t k_hint_paused[] = {
     {1u, {UI_BTN_RED}, "resume"},
+    {1u, {UI_BTN_GREEN}, "view"},
     {1u, {UI_BTN_YELLOW}, "settings"},
     {1u, {UI_BTN_BLUE}, "hold: end"},
 };
 static const hint_item_t k_hint_over[] = {
-    {4u, {UI_BTN_GRAY, UI_BTN_YELLOW, UI_BTN_GREEN, UI_BTN_BLUE}, "view"},
+    {1u, {UI_BTN_GREEN}, "view"},
     {1u, {UI_BTN_BLUE}, "hold: new game"},
 };
 static const hint_item_t k_hint_hold[] = {
@@ -280,7 +282,7 @@ static text_field_t   s_game;
 static badge_t        s_badge;
 static uint16_t       s_icon_faction;   /* 0xFFFF: icon not drawn        */
 static text_field_t   s_name;
-static text_field_t   s_faction;
+static text_field_t   s_avg;
 static text_field_t   s_total;
 static text_field_t   s_turn;
 static ui_bigdigits_t s_big;
@@ -294,7 +296,7 @@ static void invalidate_all(void) {
     s_badge = BADGE_NONE;
     s_icon_faction = 0xFFFFu;
     memset(&s_name, 0, sizeof s_name);
-    memset(&s_faction, 0, sizeof s_faction);
+    memset(&s_avg, 0, sizeof s_avg);
     memset(&s_total, 0, sizeof s_total);
     memset(&s_turn, 0, sizeof s_turn);
     ui_bigdigits_reset(&s_big);
@@ -437,10 +439,21 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
     str_append(buf, n, sizeof buf, nick ? nick : "?");
     field_draw(&s_name, COL_X, NAME_Y, NAME_COLS, 3u, buf, UI_FG, UI_BG);
 
-    /* Faction short name, scale 2. */
-    const rc_faction_t *fac = rc_faction(cfg->faction_id);
-    field_draw(&s_faction, COL_X, FACTION_Y, COL_COLS, 2u,
-               (fac && fac->short_name) ? fac->short_name : "?", UI_FG, UI_BG);
+    /* "AVG/TURN MM:SS": the average completed turn, scale 2. The current
+       turn is left out, so the value only changes when a turn ends. */
+    {
+        uint32_t avg_ms = 0u;
+        n = str_append(buf, 0u, sizeof buf, "AVG/TURN ");
+        if (rc_game_avg_turn_ms(g, seat, &avg_ms)) {
+            t[0] = '\0';
+            rc_fmt_turn(avg_ms, t);
+            t[RC_FMT_MAX] = '\0';
+            str_append(buf, n, sizeof buf, t);
+        } else {
+            str_append(buf, n, sizeof buf, "--:--");
+        }
+        field_draw(&s_avg, COL_X, AVG_Y, COL_COLS, 2u, buf, UI_FG, UI_BG);
+    }
 
     /* "TOTAL H:MM:SS", scale 2. */
     const uint32_t total_ms = rc_game_total_ms(g, seat, now_ms);
@@ -481,7 +494,11 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
         big_fg = rc_game_turn_over_limit(g, now_ms) ? UI_OVER : UI_FG;
         break;
     case RC_STATE_PAUSED:
-        rc_fmt_turn(rc_game_turn_ms(g, seat, now_ms), t);
+        /* The paused turn on the active seat's card; any other card (green
+           cycles them) shows that seat's total instead. */
+        rc_fmt_turn(seat == g->active_seat ? rc_game_turn_ms(g, seat, now_ms)
+                                           : total_ms,
+                    t);
         big_fg = UI_DIM;
         break;
     case RC_STATE_OVER:
