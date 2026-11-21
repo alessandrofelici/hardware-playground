@@ -315,7 +315,9 @@ chunks and about 85 UART lines, well under 1 s at 115200.
 - `POST /api/results` (Hop 3) stores contract-v1 results in SQLite and de-duplicates by
   `game_id`.
 - Because the MVP always sends `ended_at: null`, the server records its own `received_at`
-  and sorts by it.
+  and sorts by it. *(2026-11-21: root-metrics' `feat/vercel-supabase-ingest` does not do this
+  yet. It shows `ended_at ?? "date unknown"`, so every game from the board reads "date
+  unknown".)*
 - Game list: date (`ended_at`, otherwise `received_at`), player count, global time.
 - Game detail: per player, the nickname, faction, total, and per-turn times as a list or bar
   chart, with the limit line drawn if `turn_limit_ms` is set.
@@ -325,17 +327,24 @@ chunks and about 85 UART lines, well under 1 s at 115200.
 
 ## 5. What was built (004)
 
-Board not available while this was written, so nothing here has run on hardware yet.
+Written without a board. The hardware rows were added after a run on 2026-11-21 (the same
+day 002 passed `hw_check.py` 96/96 and 003 98/98 on the board).
 
 | Check | Result |
 |---|---|
+| Board, no WiFi module answering (C6 held in its ROM bootloader) | `hw_check.py` 101/101: after yellow the result stays in the display's outbox. |
+| Board + C6 sketch 1.3 | **Failed.** Every game the board sent was dropped without a reply, so the display kept it. Cause: an unsigned wrap in the sketch's stale-transfer check, fixed in 1.4. |
+| Board + C6 sketch 1.4 | `hw_check.py` 101/102. Display → main → C6 works: `RESULT QUEUED <id> saved` about 100 ms after `END`, the outbox empties and the game is in the C6's LittleFS. The last check, `delivered`, could not run: the phone hotspot was off and the C6 saw only campus networks. |
+| root-metrics on Vercel + Supabase | `upload_results.py` with a real board result: 201 stored, 200 duplicate on a repeat, 401 with a wrong token. The game shows on the site. |
+| bottlenose app + sketch 1.4 | `STATUS`, `SCAN` and `QUEUE` work as before. |
 | Host tests (`apps/rootclock/tests`) | `test_rc_uplink` covers the formats, reassembly (repeats, bad order, too big), C6 line lengths and CRC, outbox, sender (lost ACKs, restarts, timeouts), the GAME OVER text (always ≤ 52 columns) and the bridge end to end against a fake display and C6. |
 | Firmware build | `rootclock_main` (carrying `rootclock_display`) builds with no warnings, arm-none-eabi-gcc 14.2, Pico SDK 2.3.1. |
 | Simulator (`tools/sim`) | The display app and `main/bridge.c` run on a PC, joined by the BSP's link framing; `tools/sim/fake_c6.py` plays the C6. `hw_check.py` AT-12U uploads to a running root-metrics (SQLite and Supabase) and passes; with no C6 it checks the result stays on the display. |
-| C6 sketch | Compiles with arduino-cli and esp32 core 4.0.0 for *ESP32C6 Dev Module* with no warnings; 97 % of the default 1.2 MB app partition. Not run on a C6. |
+| C6 sketch | Compiles with arduino-cli and esp32 core 4.0.0 for *ESP32C6 Dev Module* with no warnings; 97 % of the default 1.2 MB app partition. Also with core 3.3.13 (arduino-cli 1.5.1): no warnings, 92 %. |
 
-To check on the board, in this order: `fw run rootclock` with no Bottlenose (AT-12U should
-report the result kept), then flash the C6 with 1.4 and `secrets.h`, plug it in, and run
-`hw_check.py` again: AT-12U should end in `delivered`, and the game should be on the
-root-metrics page.
+Still to check on the board: with the C6 on 2.4 GHz Wi-Fi, `hw_check.py` AT-12U should end in
+`delivered` and the game should be on the root-metrics page. That is the C6's own HTTPS POST
+(NTP first, then the certificate check against `root_cas.h`), the retry schedule and
+`RESULT OK` back to the display. Games already waiting on the C6 upload by themselves once it
+joins.
 
