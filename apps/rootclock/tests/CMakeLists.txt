@@ -34,7 +34,8 @@ add_library(rc_core STATIC
     ${RC_CORE}/rc_input.c
     ${RC_CORE}/rc_game.c
     ${RC_CORE}/rc_result.c
-    ${RC_CORE}/rc_format.c)
+    ${RC_CORE}/rc_format.c
+    ${RC_CORE}/rc_battery.c)
 target_include_directories(rc_core PUBLIC ${RC_CORE})
 target_compile_definitions(rc_core PUBLIC HOST_TEST=1)
 
@@ -52,3 +53,4 @@ rc_add_test(test_rc_format)     # screen time strings
 rc_add_test(test_rc_input)      # button map, holds
 rc_add_test(test_rc_game)       # state machine, invariants, AT script
 rc_add_test(test_rc_result)     # GameResult + contract v1 JSON
+rc_add_test(test_rc_battery)    # battery percent, drain rate, time left

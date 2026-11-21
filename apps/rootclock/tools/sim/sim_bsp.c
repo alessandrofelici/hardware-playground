@@ -262,3 +262,52 @@ uint64_t get_rand_64(void) {
     }
     return v;
 }
+
+/* ---- charger telemetry ----
+ * SIM_VBAT_MV (default 3950), SIM_USB (0/1) and SIM_CHG (0 not charging,
+ * 1 charging, 2 done), read at every poll so a script can change them by
+ * restarting nothing: they come from the environment, or from the file
+ * named by SIM_BATT_FILE ("<mv> <usb> <chg>") when that is set. */
+static void batt_values(unsigned *mv, unsigned *usb, unsigned *chg) {
+    const char *e;
+    *mv = (e = getenv("SIM_VBAT_MV")) ? (unsigned)strtoul(e, NULL, 10) : 3950u;
+    *usb = (e = getenv("SIM_USB")) ? (unsigned)strtoul(e, NULL, 10) : 0u;
+    *chg = (e = getenv("SIM_CHG")) ? (unsigned)strtoul(e, NULL, 10) : 0u;
+    const char *path = getenv("SIM_BATT_FILE");
+    if (path && *path) {
+        FILE *f = fopen(path, "r");
+        if (f) {
+            unsigned a, b, c;
+            if (fscanf(f, "%u %u %u", &a, &b, &c) == 3) { *mv = a; *usb = b; *chg = c; }
+            fclose(f);
+        }
+    }
+}
+
+bool bq25896_adc_continuous_enable(void) { return true; }
+
+bool bq25896_read_stat(bq25896_stat_t *out) {
+    unsigned mv, usb, chg;
+    batt_values(&mv, &usb, &chg);
+    out->vbus_stat = usb ? BQ25896_VBUS_USB_HOST : BQ25896_VBUS_NO_INPUT;
+    out->chg_stat = chg == 1u ? BQ25896_CHG_FAST_CHARGE
+                  : chg == 2u ? BQ25896_CHG_DONE : BQ25896_CHG_NOT_CHARGING;
+    out->vsys_stat = BQ25896_VSYS_NOT_IN_VSYSMIN;
+    return true;
+}
+
+bool bq25896_read_vbat_mv(uint16_t *mv, bool *thermal_regulation) {
+    unsigned v, usb, chg;
+    batt_values(&v, &usb, &chg);
+    *mv = (uint16_t)v;
+    *thermal_regulation = false;
+    return true;
+}
+
+bool bq25896_read_vbus_mv(uint16_t *mv, bool *attached) {
+    unsigned v, usb, chg;
+    batt_values(&v, &usb, &chg);
+    *attached = usb != 0u;
+    *mv = usb ? 5000u : 0u;
+    return true;
+}

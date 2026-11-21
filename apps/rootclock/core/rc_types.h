@@ -17,7 +17,7 @@
 #define RC_MAX_TURNS  128u    /* per-player turn log capacity               */
 #define RC_HOLD_MS    2000u   /* blue hold for END_GAME / NEW_GAME          */
 #define RC_NO_SEAT    0xFFu   /* "no seat" for active/viewed seat fields    */
-#define RC_APP_VERSION "002"  /* must match VERSION in apps/rootclock/CMakeLists.txt */
+#define RC_APP_VERSION "003"  /* must match VERSION in apps/rootclock/CMakeLists.txt */
 
 /* ---- Game state (documents/03 state diagram) ---- */
 typedef enum {

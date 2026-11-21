@@ -16,6 +16,12 @@
  *   Big timer 40,140,240,64 centred on x=160, top y=140:
  *                           rc_fmt_turn() at scale 8 if it is 5 chars,
  *                           scale 6 if longer (H:MM:SS)
+ *   Battery   128,206,192,13  PAUSED only, right-aligned to x 316: a
+ *                           20x10 battery icon filled to the charge (green
+ *                           > 50 %, yellow > 20 %, red below; blue while
+ *                           charging) and a scale-1 label: "87% ~2h10m
+ *                           left", "87% charging" or "on USB". Nothing when
+ *                           the charger has given no reading.
  *   Hint row  0,220,320,20  12x12 colour swatch + label per live button
  *
  * Which card S1 shows is rc_game_shown_seat(): the active seat while
@@ -43,12 +49,15 @@
 #define UI_CLOCK_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "rc_battery.h"
 #include "rc_game.h"
 
 /* Draw S1 for `g` at now_ms. hold_progress is rc_input_hold_progress()
- * (0..100). force: clear the whole screen and redraw every field -- call it
+ * (0..100). batt: what to show in the PAUSED battery line, or NULL for
+ * nothing. force: clear the whole screen and redraw every field -- call it
  * whenever S1 becomes the visible screen. */
 void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
-                     unsigned hold_progress, bool force);
+                     unsigned hold_progress, const rc_battery_view_t *batt,
+                     bool force);
 
 #endif

@@ -14,7 +14,7 @@ these questions.
 |---|---|
 | App folder | `apps/rootclock/` |
 | Targets | `rootclock_display`, `rootclock_main` |
-| USB product strings | `FWOG display rootclock 002`, `FWOG main rootclock 002` (001 was the first MVP) |
+| USB product strings | `FWOG display rootclock 003`, `FWOG main rootclock 003` (001 was the first MVP, 002 the next button, 003 the battery line) |
 | Build / flash | `fw build rootclock`, `fw run rootclock` (never anything else; see `CLAUDE.md`) |
 
 ---
@@ -120,6 +120,7 @@ These are not negotiable (`external/wiliOGbsp/AGENTS.md`).
 | G17 | Large digits, beep and icons are not provided by the BSP. | App-side renderer, tone synthesis and icon generator (§2). | Technical |
 | G18 | *002:* five buttons for four players was crowded, and a wrong player button ended the wrong turn. | **One next button.** Green ends the current turn and starts the next seat's (P1 → P2 → P3 (→ P4) → P1). While paused or after the game, green cycles the player cards instead; it only changes what is shown. | User (002) |
 | G19 | *002:* what replaces the faction line on S1. | **AVG/TURN**: the average of the shown player's completed turns. The running turn is left out so the number only moves when a turn ends. The icon still shows the faction. | User (002) |
+| G20 | *003:* a battery indicator with time left, but the board has no fuel gauge (BQ27441 not fitted). | While PAUSED only: percent from the charger's battery-voltage reading through a typical Li-ion curve; time left = percent ÷ drain rate, assumed 15 %/h for the first 10 minutes on battery, then measured from the slope of the last 30 minutes. Charging and USB are shown instead of a time. | Assumed (003) |
 
 ### Button map (pause-menu scheme, amended in 002)
 

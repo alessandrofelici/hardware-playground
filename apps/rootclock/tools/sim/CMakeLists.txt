@@ -48,6 +48,8 @@ add_executable(rootclock_sim
     ${RC}/core/rc_game.c
     ${RC}/core/rc_result.c
     ${RC}/core/rc_format.c
+    ${RC}/core/rc_battery.c
+    ${RC}/display/battery.c
     sim_bsp.c
     sim_hooks.c
     sim_beeper.c)

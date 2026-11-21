@@ -20,7 +20,9 @@ import zlib
 W, H = 320, 240
 SETTLE_S = 0.45   # an injected tap is 100 ms, plus debounce, plus one redraw
 
-# (name, steps). A step is a console command, or ("sleep", seconds).
+# (name, steps). A step is a console command, ("sleep", seconds), or
+# ("batt", "<mV> <usb 0|1> <charge 0|1|2>"), the simulated charger reading
+# (the app reads it every 5 s).
 SCENARIO = [
     ("ready", []),
     ("settings-players", ["press yellow"]),
@@ -35,6 +37,9 @@ SCENARIO = [
                           ("sleep", 1.0)]),
     ("paused-active", ["press red"]),
     ("paused-view-next", ["press green"]),
+    ("paused-charging", [("batt", "4100 1 1"), ("sleep", 5.5)]),
+    ("paused-on-usb", [("batt", "4200 1 2"), ("sleep", 5.5)]),
+    ("paused-low-battery", [("batt", "3650 0 0"), ("sleep", 5.5)]),
     ("paused-hold", ["hold blue 1200", ("sleep", 0.6)]),
     ("over", [("sleep", 1.0), "hold blue 2500"]),
     ("over-view-next", ["press green"]),
@@ -83,8 +88,13 @@ def main():
         sys.exit(__doc__)
     sim, out = sys.argv[1], sys.argv[2]
     os.makedirs(out, exist_ok=True)
-    fb = os.path.join(tempfile.mkdtemp(prefix="rootclock-sim-"), "fb.ppm")
-    env = dict(os.environ, SIM_FB=fb, SIM_SEED=os.environ.get("SIM_SEED", "1"))
+    tmp = tempfile.mkdtemp(prefix="rootclock-sim-")
+    fb = os.path.join(tmp, "fb.ppm")
+    batt = os.path.join(tmp, "batt.txt")
+    with open(batt, "w") as f:
+        f.write("3950 0 0")
+    env = dict(os.environ, SIM_FB=fb, SIM_BATT_FILE=batt,
+               SIM_SEED=os.environ.get("SIM_SEED", "1"))
     p = subprocess.Popen([sim], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          env=env)
     replies = []
@@ -95,6 +105,10 @@ def main():
         time.sleep(0.6)
         for i, (name, steps) in enumerate(SCENARIO, 1):
             for step in steps:
+                if isinstance(step, tuple) and step[0] == "batt":
+                    with open(batt, "w") as f:
+                        f.write(step[1])
+                    continue
                 if isinstance(step, tuple):
                     time.sleep(step[1])
                     continue

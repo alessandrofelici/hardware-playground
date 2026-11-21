@@ -69,6 +69,26 @@
 #define HINT_BAR_H     8u    /* hold progress bar, y 226..234 */
 #define HOLD_TRACK     UI_RGB(64, 64, 64)
 
+/* Battery line, PAUSED only: band 128,206 to the right edge, 13 px tall --
+ * between the big digits (they end at y 204) and the hint row (y 220).
+ * Icon: an 18x10 body with a 1 px outline and a 2x4 nub; the fill is up to
+ * 14x6 px inside it. Label: scale 1 (6x8 px cells) ending at x 316. */
+#define BATT_BAND_X    128u
+#define BATT_BAND_Y    206u
+#define BATT_BAND_H    13u
+#define BATT_RIGHT     316u
+#define BATT_ICON_Y    207u
+#define BATT_BODY_W    18u
+#define BATT_BODY_H    10u
+#define BATT_NUB_W     2u
+#define BATT_NUB_H     4u
+#define BATT_FILL_W    14u
+#define BATT_FILL_H    6u
+#define BATT_TEXT_Y    208u
+#define BATT_GAP       4u
+#define BATT_TEXT_MAX  24u
+#define BATT_EMPTY     UI_RGB(40, 40, 40)
+
 /* ---- Small helpers (no snprintf: cheap enough to run every iteration) ---- */
 
 static size_t str_append(char *buf, size_t pos, size_t cap, const char *s) {
@@ -290,6 +310,12 @@ static hint_mode_t    s_hint;
 static uint16_t       s_hold_x0;        /* progress track, HINT_HOLD only */
 static uint16_t       s_hold_w;
 static uint16_t       s_hold_drawn;     /* px of the track filled blue    */
+static struct {
+    bool     shown;
+    uint8_t  fill_px;
+    uint16_t fill_colour;
+    char     text[BATT_TEXT_MAX];
+} s_batt;                               /* the battery line as drawn      */
 
 static void invalidate_all(void) {
     memset(&s_game, 0, sizeof s_game);
@@ -302,6 +328,70 @@ static void invalidate_all(void) {
     ui_bigdigits_reset(&s_big);
     s_hint = HINT_NONE;
     s_hold_x0 = s_hold_w = s_hold_drawn = 0u;
+    memset(&s_batt, 0, sizeof s_batt);
+}
+
+/* The PAUSED battery line (ui_clock.h). Redrawn only when its label, fill or
+   colour changes; cleared once when it should no longer show. */
+static void draw_battery(const rc_battery_view_t *v, bool show) {
+    if (!show || !v || v->mode == RC_BATT_UNKNOWN) {
+        if (s_batt.shown) {
+            st7789_fill_rect(BATT_BAND_X, BATT_BAND_Y, SCR_W - BATT_BAND_X,
+                             BATT_BAND_H, UI_BG);
+            memset(&s_batt, 0, sizeof s_batt);
+        }
+        return;
+    }
+
+    char text[BATT_TEXT_MAX];
+    size_t n = 0u;
+    if (v->mode == RC_BATT_ON_USB) {
+        n = str_append(text, 0u, sizeof text, "on USB");
+    } else {
+        n = uint_append(text, 0u, sizeof text, v->percent);
+        n = str_append(text, n, sizeof text, "%");
+        if (v->mode == RC_BATT_CHARGING) {
+            n = str_append(text, n, sizeof text, " charging");
+        } else if (v->has_estimate) {
+            char rem[8];
+            rc_battery_fmt_remaining(v->remaining_min, rem);
+            n = str_append(text, n, sizeof text, " ~");
+            n = str_append(text, n, sizeof text, rem);
+            n = str_append(text, n, sizeof text, " left");
+        }
+    }
+    const uint8_t pct = v->percent > 100u ? 100u : v->percent;
+    const uint8_t fill_px = (uint8_t)((BATT_FILL_W * pct + 50u) / 100u);
+    const uint16_t fill_colour = v->mode == RC_BATT_CHARGING ? UI_BTN_BLUE
+                                 : pct > 50u                 ? UI_BTN_GREEN
+                                 : pct > 20u                 ? UI_BTN_YELLOW
+                                                             : UI_BTN_RED;
+    if (s_batt.shown && s_batt.fill_px == fill_px &&
+        s_batt.fill_colour == fill_colour && strcmp(s_batt.text, text) == 0) {
+        return;
+    }
+
+    const unsigned text_w = lcd_text_width_px((unsigned)n, 1u);
+    const unsigned text_x = BATT_RIGHT - text_w;
+    const unsigned icon_x = text_x - BATT_GAP - BATT_NUB_W - BATT_BODY_W;
+    st7789_fill_rect(BATT_BAND_X, BATT_BAND_Y, SCR_W - BATT_BAND_X, BATT_BAND_H,
+                     UI_BG);
+    /* Body outline, nub, then empty and filled parts of the inside. */
+    st7789_fill_rect((uint16_t)icon_x, BATT_ICON_Y, BATT_BODY_W, BATT_BODY_H, UI_FG);
+    st7789_fill_rect((uint16_t)(icon_x + 1u), BATT_ICON_Y + 1u, BATT_BODY_W - 2u,
+                     BATT_BODY_H - 2u, UI_BG);
+    st7789_fill_rect((uint16_t)(icon_x + BATT_BODY_W),
+                     (uint16_t)(BATT_ICON_Y + (BATT_BODY_H - BATT_NUB_H) / 2u),
+                     BATT_NUB_W, BATT_NUB_H, UI_FG);
+    const uint16_t fx = (uint16_t)(icon_x + 2u), fy = BATT_ICON_Y + 2u;
+    st7789_fill_rect(fx, fy, BATT_FILL_W, BATT_FILL_H, BATT_EMPTY);
+    if (fill_px) st7789_fill_rect(fx, fy, fill_px, BATT_FILL_H, fill_colour);
+    lcd_text_draw((uint16_t)text_x, BATT_TEXT_Y, text, 1u, UI_FG, UI_BG);
+
+    s_batt.shown = true;
+    s_batt.fill_px = fill_px;
+    s_batt.fill_colour = fill_colour;
+    memcpy(s_batt.text, text, sizeof text);
 }
 
 static void draw_badge(badge_t b) {
@@ -377,7 +467,8 @@ static void draw_hint(hint_mode_t mode, unsigned hold_progress) {
 }
 
 void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
-                     unsigned hold_progress, bool force) {
+                     unsigned hold_progress, const rc_battery_view_t *batt,
+                     bool force) {
     if (!g) return;
 
     if (force || !s_drawn) {
@@ -512,6 +603,9 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
     const uint8_t big_scale =
         strlen(t) <= 5u ? (uint8_t)BIG_SCALE_MMSS : (uint8_t)BIG_SCALE_HMS;
     ui_bigdigits_draw(&s_big, BIG_CX, BIG_Y, t, big_scale, big_fg, UI_BG);
+
+    /* Battery line, only while paused. */
+    draw_battery(batt, st == RC_STATE_PAUSED);
 
     /* Hint row. */
     draw_hint(hold_progress > 0u ? HINT_HOLD : hint, hold_progress);

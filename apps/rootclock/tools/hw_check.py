@@ -43,7 +43,7 @@ BAUD = 115200                 # NEVER 1200
 TOL_MS = 300
 TAP_SETTLE_S = 0.25           # 100 ms injected tap + 5 ms debounce + margin
 RED_HOLD_LIMIT_MS = 1000
-APP_VERSION = "002"           # VERSION in apps/rootclock/CMakeLists.txt
+APP_VERSION = "003"           # VERSION in apps/rootclock/CMakeLists.txt
 
 NICKS = ["Jacob", "Alex", "Ahmed", "Lorenzo"]
 FACTION_KEYS = ["marquise", "eyrie", "woodland", "vagabond", "riverfolk", "cult",
@@ -322,6 +322,12 @@ def run(b):
     b.press("red")
     s1 = b.state()
     c.ok(s1["state"] == "PAUSED" and s1["viewed"] == 0, "red pauses, P1's card shown")
+    bt = s1.get("batt", {})
+    c.ok(bt.get("mode") in ("battery", "charging", "usb", "unknown")
+         and 0 <= bt.get("pct", -1) <= 100,
+         f"battery reported ({bt.get('mode')}, {bt.get('mv')} mV, {bt.get('pct')} %,"
+         f" {bt.get('min')} min left)")
+    c.ok(bt.get("mode") != "unknown", "the charger answered (battery line shown on S1)")
     seen = []
     for _ in range(3):
         b.press("green")
