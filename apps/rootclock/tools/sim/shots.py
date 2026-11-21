@@ -7,6 +7,8 @@ hw_check.py uses, and saves the framebuffer after each step.
 
 Usage:  python3 shots.py <path/to/rootclock_sim> <out_dir>
 Writes <out_dir>/NN-<name>.png and <out_dir>/sheet.png. Standard library only.
+The WiFi module is fake_c6.py with a pretend server (set SIM_C6 to override,
+or to an empty string for a board with no Bottlenose).
 """
 import os
 import struct
@@ -43,6 +45,9 @@ SCENARIO = [
     ("paused-hold", ["hold blue 1200", ("sleep", 0.6)]),
     ("over", [("sleep", 1.0), "hold blue 2500"]),
     ("over-view-next", ["press green"]),
+    ("over-wifi-up", [("sleep", 1.5)]),
+    ("over-uploaded", ["press yellow", ("sleep", 1.5)]),
+    ("ready-after-upload", ["hold blue 2500"]),
 ]
 
 
@@ -93,8 +98,10 @@ def main():
     batt = os.path.join(tmp, "batt.txt")
     with open(batt, "w") as f:
         f.write("3950 0 0")
+    fake_c6 = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fake_c6.py")
     env = dict(os.environ, SIM_FB=fb, SIM_BATT_FILE=batt,
-               SIM_SEED=os.environ.get("SIM_SEED", "1"))
+               SIM_SEED=os.environ.get("SIM_SEED", "1"),
+               SIM_C6=os.environ.get("SIM_C6", f"{sys.executable} {fake_c6} --wifi-delay 1.5"))
     p = subprocess.Popen([sim], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          env=env)
     replies = []

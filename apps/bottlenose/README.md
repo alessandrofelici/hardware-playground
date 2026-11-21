@@ -5,6 +5,10 @@ plugs into the FreeWili OG's 20-pin breakout header. This app makes the C6 join
 your Wi-Fi, sync the time over NTP and fetch one URL over HTTP, then shows the
 result on the OG's LCD.
 
+Since sketch 1.3 the same C6 firmware also uploads finished **rootclock** games to
+root-metrics (see [Uploading rootclock games](#uploading-rootclock-games)). The bottlenose app
+works as before with it.
+
 There are three parts:
 
 | Part | Runs on | Built with |
@@ -67,7 +71,8 @@ This replaces the Bottlenose's stock firmware.
    3.x, from the Boards Manager.
 2. Copy `c6/bottlenose_c6/secrets.example.h` to `secrets.h` in the same
    folder and set your network. The C6 is 2.4 GHz only. `secrets.h` is
-   git-ignored.
+   git-ignored. For rootclock uploads also set `RESULTS_URL` and
+   `RESULTS_TOKEN` (below).
 3. Open `c6/bottlenose_c6/bottlenose_c6.ino`. Tools: **Board: ESP32C6 Dev
    Module**, **USB CDC On Boot: Enabled**.
 4. With the OG switched on, plug the Bottlenose's USB-C into the PC, pick its
@@ -99,6 +104,43 @@ the C6 to repeat its state. Red held 6 s still powers the board off.
 On `fw console main` you can type the same commands (`SCAN`, `FETCH`,
 `STATUS`, `HELP`) and they go to the C6. `!stats` shows the bridge's counters
 and `!verbose` also shows the once-a-second `TIME` lines.
+
+## Uploading rootclock games
+
+Sketch 1.3 takes finished games from rootclock's main CPU (`RESULT BEGIN / DATA / END`
+lines, with a length and CRC check), saves each one to the C6's flash and POSTs it to
+root-metrics until the server has it. In `secrets.h`:
+
+```c
+#define RESULTS_URL   "https://<your-app>.vercel.app/api/results"  // or http://<lan-host>:8080/api/results
+#define RESULTS_TOKEN "<root-metrics INGEST_TOKEN>"
+```
+
+- **Flash storage.** Saved games live in LittleFS on the C6's data partition. The default
+  partition scheme of *ESP32C6 Dev Module* ("Default 4MB with spiffs") has one; the sketch
+  formats it the first time. Uploading a new sketch does not erase it (unless *Erase All Flash
+  Before Sketch Upload* is enabled), so games waiting there survive a reflash.
+- **Size.** 1.3 uses 97% of that scheme's 1.2 MB app space (1.2 used 92%). If a later change
+  stops fitting, pick *No OTA (2MB APP/2MB SPIFFS)* or *Huge APP (3MB No OTA/1MB SPIFFS)*:
+  both keep a data partition. Changing the scheme moves that partition, so games still waiting
+  on the C6 are lost; upload them first.
+- **Checked so far.** Compiled with arduino-cli and the esp32 core 4.0.0 (*ESP32C6 Dev
+  Module*, *USB CDC On Boot: Enabled*), no warnings from the sketch, also with *Huge APP*.
+  Not yet run on a C6: the protocol side was exercised against `apps/rootclock/tools/sim/
+  fake_c6.py`, which mirrors it.
+- **HTTPS.** The sketch checks the server's certificate against `root_cas.h` (Google Trust
+  Services for `*.vercel.app`, Let's Encrypt for most custom domains), after syncing the clock
+  over NTP. `#define RESULTS_TLS_INSECURE 1` skips the check while testing another server.
+- **Retries.** 5 s, 15 s, 60 s, then every 5 minutes while Wi-Fi is up. A wrong token (401/
+  403) stops the retries until the C6 restarts; the games are kept, so reflashing with the
+  right token sends them. A result the server calls invalid (other 4xx) is moved to `/bad/`.
+- **Radio.** `WIFI OFF` (rootclock sends it at boot and during play) switches the radio off
+  once nothing is waiting; `WIFI ON` (at GAME OVER) joins again. Without those commands, as
+  with the bottlenose app, it behaves as before and stays joined.
+
+New lines it sends: `QUEUE <n>` (games saved, not yet uploaded), `RESULT QUEUED|OK|ERR ...`
+and `UPLOAD ...` progress. New commands: `QUEUE`, `WIFI ON`, `WIFI OFF`. The bottlenose app
+shows them in its log like any other line.
 
 ## Changing what it fetches
 

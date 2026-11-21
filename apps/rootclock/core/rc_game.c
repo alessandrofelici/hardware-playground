@@ -148,6 +148,8 @@ static rc_events_t rc_apply_settings(rc_game_t *g, rc_action_t a, uint32_t now_m
 
 static rc_events_t rc_apply_over(rc_game_t *g, rc_action_t a) {
     switch (a.kind) {
+    case RC_ACT_SEND:
+        return RC_EVT_SEND;
     case RC_ACT_VIEW_NEXT:
         g->viewed_seat = rc_game_next_seat(g, g->viewed_seat);
         break;

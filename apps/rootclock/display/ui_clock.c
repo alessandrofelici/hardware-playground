@@ -89,6 +89,12 @@
 #define BATT_TEXT_MAX  24u
 #define BATT_EMPTY     UI_RGB(40, 40, 40)
 
+/* Upload line, GAME OVER only: scale 1 from x 4, 52 columns (312 px), in the
+ * same band as the battery line (the two never show together). */
+#define NOTE_X         4u
+#define NOTE_Y         208u
+#define NOTE_COLS      52u
+
 /* ---- Small helpers (no snprintf: cheap enough to run every iteration) ---- */
 
 static size_t str_append(char *buf, size_t pos, size_t cap, const char *s) {
@@ -146,7 +152,7 @@ static void fill_minus(int32_t ax, int32_t ay, int32_t aw, int32_t ah,
 
 /* ---- Cached text field ---- */
 
-#define TF_MAX_COLS 20u
+#define TF_MAX_COLS 52u
 
 typedef struct {
     bool     valid;
@@ -219,6 +225,7 @@ typedef enum {
     HINT_RUNNING,
     HINT_PAUSED,
     HINT_OVER,
+    HINT_OVER_SEND,
     HINT_HOLD
 } hint_mode_t;
 
@@ -238,6 +245,11 @@ static const hint_item_t k_hint_paused[] = {
 };
 static const hint_item_t k_hint_over[] = {
     {1u, {UI_BTN_GREEN}, "view"},
+    {1u, {UI_BTN_BLUE}, "hold: new game"},
+};
+static const hint_item_t k_hint_over_send[] = {
+    {1u, {UI_BTN_GREEN}, "view"},
+    {1u, {UI_BTN_YELLOW}, "send"},
     {1u, {UI_BTN_BLUE}, "hold: new game"},
 };
 static const hint_item_t k_hint_hold[] = {
@@ -316,6 +328,7 @@ static struct {
     uint16_t fill_colour;
     char     text[BATT_TEXT_MAX];
 } s_batt;                               /* the battery line as drawn      */
+static text_field_t   s_note;           /* the GAME OVER upload line      */
 
 static void invalidate_all(void) {
     memset(&s_game, 0, sizeof s_game);
@@ -329,6 +342,20 @@ static void invalidate_all(void) {
     s_hint = HINT_NONE;
     s_hold_x0 = s_hold_w = s_hold_drawn = 0u;
     memset(&s_batt, 0, sizeof s_batt);
+    memset(&s_note, 0, sizeof s_note);
+}
+
+/* The GAME OVER upload line (ui_clock.h). Cleared once when it should no
+   longer show, and forgotten, because the battery line uses the same band. */
+static void draw_note(const char *text, uint16_t fg, bool show) {
+    if (!show || !text || !text[0]) {
+        if (s_note.valid) {
+            st7789_fill_rect(0u, BATT_BAND_Y, SCR_W, BATT_BAND_H, UI_BG);
+            memset(&s_note, 0, sizeof s_note);
+        }
+        return;
+    }
+    field_draw(&s_note, NOTE_X, NOTE_Y, NOTE_COLS, 1u, text, fg, UI_BG);
 }
 
 /* The PAUSED battery line (ui_clock.h). Redrawn only when its label, fill or
@@ -431,6 +458,9 @@ static void draw_hint(hint_mode_t mode, unsigned hold_progress) {
         case HINT_OVER:
             hint_draw(k_hint_over, COUNT_OF(k_hint_over));
             break;
+        case HINT_OVER_SEND:
+            hint_draw(k_hint_over_send, COUNT_OF(k_hint_over_send));
+            break;
         case HINT_HOLD: {
             const unsigned end = hint_draw(k_hint_hold, COUNT_OF(k_hint_hold));
             const unsigned x0 = end + HINT_ITEM_GAP;
@@ -467,7 +497,7 @@ static void draw_hint(hint_mode_t mode, unsigned hold_progress) {
 }
 
 void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
-                     unsigned hold_progress, const rc_battery_view_t *batt,
+                     unsigned hold_progress, const ui_clock_info_t *info,
                      bool force) {
     if (!g) return;
 
@@ -508,7 +538,10 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
     switch (st) {
     case RC_STATE_RUNNING: badge = BADGE_RUNNING; hint = HINT_RUNNING; break;
     case RC_STATE_PAUSED:  badge = BADGE_PAUSED;  hint = HINT_PAUSED;  break;
-    case RC_STATE_OVER:    badge = BADGE_OVER;    hint = HINT_OVER;    break;
+    case RC_STATE_OVER:
+        badge = BADGE_OVER;
+        hint = (info && info->can_send) ? HINT_OVER_SEND : HINT_OVER;
+        break;
     default: break;
     }
     if (badge != s_badge) {
@@ -604,8 +637,14 @@ void ui_clock_render(const rc_game_t *g, uint32_t now_ms,
         strlen(t) <= 5u ? (uint8_t)BIG_SCALE_MMSS : (uint8_t)BIG_SCALE_HMS;
     ui_bigdigits_draw(&s_big, BIG_CX, BIG_Y, t, big_scale, big_fg, UI_BG);
 
-    /* Battery line, only while paused. */
-    draw_battery(batt, st == RC_STATE_PAUSED);
+    /* Battery line while paused, upload line when the game is over. Hide
+       first, then draw, as they share a band. */
+    if (st != RC_STATE_PAUSED) draw_battery(NULL, false);
+    if (st != RC_STATE_OVER) draw_note(NULL, 0u, false);
+    if (st == RC_STATE_PAUSED) draw_battery(info ? info->batt : NULL, true);
+    if (st == RC_STATE_OVER) {
+        draw_note(info ? info->over_note : NULL, info ? info->over_note_fg : UI_FG, true);
+    }
 
     /* Hint row. */
     draw_hint(hold_progress > 0u ? HINT_HOLD : hint, hold_progress);

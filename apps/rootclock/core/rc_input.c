@@ -44,6 +44,7 @@ static rc_action_t rc_tap(rc_state_t state, rc_btn_t btn) {
         }
         break;
     case RC_STATE_OVER:
+        if (btn == RC_BTN_YELLOW) return rc_act(RC_ACT_SEND, RC_NO_SEAT);
         if (btn == RC_BTN_GREEN)  return rc_act(RC_ACT_VIEW_NEXT, RC_NO_SEAT);
         break;   /* blue only arms the NEW_GAME hold */
     default:

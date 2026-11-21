@@ -2,8 +2,8 @@
  *
  * A chess-clock-style turn timer for 3-4 players of Root. The loop is:
  *   fwog_power_poll() -> test console -> rc_input_map() -> rc_game_apply()
- *   -> rc_game_tick() -> beep / result -> battery_poll() -> render S1 or S2
- *   -> beeper_process()
+ *   -> rc_game_tick() -> beep / result -> export_poll() (upload, 004)
+ *   -> battery_poll() -> render S1 or S2 -> beeper_process()
  *
  * Game logic lives in core/ (SDK-free); this file only wires it to the BSP.
  * Planning documents: documents/ at the repository root.
@@ -32,11 +32,13 @@
 
 #include "battery.h"
 #include "beeper.h"
+#include "export.h"
 #include "rc_battery.h"
 #include "rc_game.h"
 #include "rc_input.h"
 #include "rc_result.h"
 #include "rc_types.h"
+#include "rc_uplink.h"
 #include "ui_clock.h"
 #include "ui_palette.h"
 #include "ui_settings.h"
@@ -147,6 +149,12 @@ static void print_state(uint32_t now) {
     rc_battery_view_t bv;
     rc_battery_view(&s_batt, &bv);
     static const char *const k_batt_mode[] = {"unknown", "battery", "charging", "usb"};
+    rc_uplink_view_t uv;
+    export_view(&uv, now);
+    static const char *const k_wifi[] = {"unknown", "off", "connecting", "up", "down"};
+    static const char *const k_res[] = {"none", "receiving", "to_c6", "saved",
+                                        "delivered", "rejected", "failed"};
+    static const char *const k_send[] = {"idle", "chunks", "wait", "saved", "failed"};
 
     DIAG("STATE {\"app\":\"rootclock\",\"state\":\"%s\",\"screen\":\"%s\","
          "\"active\":%d,\"viewed\":%d,\"shown\":%u,\"turn_ms\":%lu,"
@@ -157,7 +165,10 @@ static void print_state(uint32_t now) {
          "\"nick\":[%u,%u,%u,%u],\"fac\":[%u,%u,%u,%u],"
          "\"hold\":%u,\"beeps\":%lu,\"games_over\":%lu,\"inject\":%s,"
          "\"batt\":{\"mode\":\"%s\",\"mv\":%u,\"pct\":%u,\"min\":%ld,"
-         "\"measured\":%s}}\n",
+         "\"measured\":%s},"
+         "\"uplink\":{\"link\":%s,\"main\":%s,\"c6\":%s,\"wifi\":\"%s\","
+         "\"res\":\"%s\",\"http\":%u,\"c6_queue\":%u,\"outbox\":%u,"
+         "\"send\":\"%s\"}}\n",
          state_name(g->state), g->state == RC_STATE_SETTINGS ? "S2" : "S1",
          active < RC_SEATS ? (int)active : -1,
          g->viewed_seat < RC_SEATS ? (int)g->viewed_seat : -1,
@@ -182,7 +193,12 @@ static void print_state(uint32_t now) {
          s_inject.active ? "true" : "false",
          k_batt_mode[bv.mode <= RC_BATT_ON_USB ? bv.mode : 0], (unsigned)bv.mv,
          (unsigned)bv.percent, bv.has_estimate ? (long)bv.remaining_min : -1L,
-         bv.measured ? "true" : "false");
+         bv.measured ? "true" : "false",
+         uv.link_up ? "true" : "false", uv.main_heard ? "true" : "false",
+         uv.st.c6_alive ? "true" : "false", k_wifi[uv.st.wifi <= RC_WIFI_DOWN ? uv.st.wifi : 0],
+         k_res[uv.st.res <= RC_RES_FAILED ? uv.st.res : 0], (unsigned)uv.st.http,
+         (unsigned)uv.st.c6_queue, (unsigned)uv.outbox,
+         k_send[uv.sender->phase <= RC_SEND_FAILED ? uv.sender->phase : 0]);
 }
 
 static void game_reset(void) {
@@ -258,6 +274,7 @@ static void on_game_over(uint32_t now) {
     s_games_over++;
     if (s_have_result) {
         DIAG("RESULT %s\n", s_json);
+        export_add(s_json, n);   /* kept until the WiFi module has saved it */
     } else {
         DIAG("ERR result did not fit in %u bytes\n", (unsigned)sizeof s_json);
     }
@@ -274,6 +291,7 @@ int main(void) {
 
     rc_battery_init(&s_batt);
     battery_init(to_ms_since_boot(get_absolute_time()));
+    export_init(to_ms_since_boot(get_absolute_time()));
 
     game_reset();
     DIAG("[rootclock_display] lcd=%s leds=%s audio=%s\n", lcd_ok ? "ok" : "FAILED",
@@ -301,7 +319,9 @@ int main(void) {
             beeper_beep();
         }
         if (ev & RC_EVT_GAME_OVER) on_game_over(now);
+        if (ev & RC_EVT_SEND) export_send(now);
 
+        export_poll(s_game.state, now);
         battery_poll(&s_batt, now);
 
         if (lcd_ok) {
@@ -310,9 +330,22 @@ int main(void) {
             if (screen == 1) {
                 rc_battery_view_t bv;
                 rc_battery_view(&s_batt, &bv);
+                char note[64] = "";
+                uint16_t note_fg = UI_FG;
+                if (s_game.state == RC_STATE_OVER) {
+                    rc_uplink_view_t uv;
+                    export_view(&uv, now);
+                    switch (rc_uplink_text(&uv, note, sizeof note)) {
+                    case RC_TONE_BUSY: note_fg = UI_BTN_YELLOW; break;
+                    case RC_TONE_GOOD: note_fg = UI_BTN_GREEN; break;
+                    case RC_TONE_BAD:  note_fg = UI_OVER; break;
+                    default:           break;
+                    }
+                }
+                const ui_clock_info_t info = { &bv, note, note_fg, export_waiting() > 0u };
                 ui_clock_render(&s_game, now,
                                 rc_input_hold_progress(&s_input, s_game.state, now),
-                                &bv, force);
+                                &info, force);
             } else {
                 ui_settings_render(&s_game, force);
             }

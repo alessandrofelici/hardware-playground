@@ -74,12 +74,13 @@ apps/rootclock/
 | **ChargerReader** | `battery.c` | *(003)* Reads BQ25896 status, BATV and VBUSV every 5 s into the BatteryGauge; turns the charger ADC on; never writes a charge setting. | next read time, failure count (backs off after 3) | `battery_init(now)`, `battery_poll(gauge, now)` |
 | **App** | `display/main.c` | Owns the loop and wires the parts together. | `rc_game_t`, `rc_input_t` | loop: `fwog_power_poll()` → `rc_input_map()` → `rc_game_apply()` → `rc_game_tick()` → beep → render → `beeper_process()` |
 
-### Future (`<<future>>`, see [04](04-future-esp32-integration.md))
+### Upload (004, see [04](04-future-esp32-integration.md))
 
 | Class | Where | Responsibility |
 |---|---|---|
-| **ExportLink** | `display/rc_export.c` + `common/rc_link.h` | Splits the JSON into link frames (0x50) to the main CPU, waits for an ACK (0x51) and retries. |
-| **OrcaBridge** | `main/` | Relays result chunks from the link to the ESP32-C6 over UART1 as `RESULT ...` lines, and reports uplink status (0x52). |
+| **Uplink** (formats, Outbox, Sender, Reassembler, C6 lines) | `core/rc_uplink.c` | Pure and host-tested: link payloads 0x50–0x53, the display's outbox of up to 4 unsent results, the chunk sender with ACK timeouts, main's reassembly, the `RESULT`/`WIFI` line formats and parser, the GAME OVER text. |
+| **ExportLink** | `display/export.c` + `common/rc_link.h` | Keeps finished games in the outbox, asks for WiFi in GAME OVER, sends on yellow, drops a game once main reports it saved on the C6. |
+| **OrcaBridge** | `main/bridge.c` (+ `main/main.c` for UART1) | Reassembles chunks, streams them to the ESP32-C6 as `RESULT ...` lines, follows its replies and reports uplink status (0x52). Portable: the simulator runs the same file. |
 
 ## Pages → classes
 
@@ -168,6 +169,7 @@ classDiagram
         NEW_GAME
         MENU_UP_DOWN_PREV_NEXT_DONE
         VIEW
+        SEND
     }
     class State {
         <<enumeration>>
@@ -268,6 +270,7 @@ stateDiagram-v2
     SETTINGS --> PAUSED : green (opened from PAUSED)
     PAUSED --> OVER : blue held 2 s
     OVER --> OVER : green (view next card)
+    OVER --> OVER : yellow (send results, 004)
     OVER --> READY : blue held 2 s (new game, settings kept)
     note right of RUNNING
         red held 6 s powers off from any state

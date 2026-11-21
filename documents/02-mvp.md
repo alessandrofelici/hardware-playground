@@ -36,10 +36,11 @@ A FreeWili OG that keeps time for a 3–4 player board game:
 | F15 | *(002)* S1 shows the shown player's average completed turn (`AVG/TURN`) | G19 |
 | F16 | *(002)* While paused, green cycles through the player cards without touching any clock | G18 |
 | F17 | *(003)* While paused, a battery icon with the charge and the estimated time left | G20 |
+| F18 | *(004)* At GAME OVER, yellow uploads the result(s) through the Bottlenose WiFi module to root-metrics; nothing is lost on failure | R-EXP-1, G21 |
 
 ## Out of scope
 
-- Any ESP32 or mobile export (planned in [04](04-future-esp32-integration.md)).
+- *(Built in 004, F18.)* ~~Any ESP32 or mobile export~~ — see [04](04-future-esp32-integration.md).
 - Saving settings across power-off.
 - LED-bar effects beyond the BSP's power-off countdown.
 - A results or summary screen. GAME OVER reuses S1.
@@ -57,7 +58,7 @@ Actions fire when the button is pressed. "Hold" means held for 2 s, timed from t
 | RUNNING | — | — | next player | — | pause |
 | PAUSED | — | settings | view next card | hold: end game | resume |
 | SETTINGS | row up | value − | done | value + | row down |
-| GAME OVER | — | — | view next card | hold: new game | — |
+| GAME OVER | — | send (004) | view next card | hold: new game | — |
 
 Holding red for 6 s powers the board off from any state.
 
@@ -99,6 +100,7 @@ character, scale 3 is 18×24 px. The big digits are drawn by the app at scale 8,
 | Total | 116, 82 | `TOTAL H:MM:SS`, scale 2 |
 | Turn info | 116, 104 | `TURN <n>  LIM <m:ss>`, or `LIM off`, scale 2 |
 | Big timer | 40, 140, 240, 64 | `MM:SS` at scale 8. From 100 minutes it becomes `H:MM:SS` at scale 6 (252 px wide). |
+| Upload | 4, 206, 312, 13 | *(004)* GAME OVER only: one scale-1 line saying what yellow will do or how the upload is going (`WiFi up. Yellow: send`, `1 game saved on WiFi module, uploading`, `Uploaded to root-metrics`, or what went wrong), coloured white / yellow / green / red. |
 | Battery | 128, 206, 192, 13 | *(003)* PAUSED only, right-aligned: a 20×10 battery icon filled to the charge and a scale-1 label, `70% ~4h40m left`, `88% charging` or `on USB`. |
 | Hint row | 0, 220, 320, 20 | One colour swatch and a label for each button that is live in this state. |
 
@@ -109,7 +111,7 @@ How S1 looks in each state:
 | READY | P1, the player who will start | `00:00`, white | `[R] start  [Y] settings` |
 | RUNNING | The active player | That player's current turn, counting; red once past the limit | `[G] next  [R] pause` |
 | PAUSED | The active player, then each next player as green is pressed | The active player's frozen turn; another player's card shows their **total**. Dim gray either way. | `[R] resume  [G] view  [Y] settings  [B] hold: end` (scale 1) |
-| GAME OVER | The last active player, then each next player as green is pressed | That player's **total**, frozen | `[G] view  [B] hold: new game` |
+| GAME OVER | The last active player, then each next player as green is pressed | That player's **total**, frozen | `[G] view  [B] hold: new game`; with a result waiting to upload, `[G] view  [Y] send  [B] hold: new game` (scale 1) |
 
 While blue is being held toward a hold action, the hint row reads `keep holding...`. Letting
 go before 2 s cancels.
@@ -174,7 +176,8 @@ terminal for AT-11. Each test is one step of a continuous demo, in order.
 | AT-09 | Green, wait 1 s, green. | P3's turn, white, then P1's second turn: P4 is skipped with 3 players. P1's `TOTAL` resumes from ~0:15 and grows; its average does not move. | F1, F5, F6, F8, F14 |
 | AT-10 | Red. Green ×3, wait, green, then red. | PAUSED: the battery line shows under the big digits. Green shows P2, P3, P1 in turn while every number stays frozen. Red resumes P1's same turn even though P2's card was showing. | F2, F7, F16, F17 |
 | AT-11 | Green (P2), wait a second, red to pause, hold blue 2 s. | GAME OVER. GAME stops. The console prints one result JSON line ([04](04-future-esp32-integration.md) schema) with 3 players, no P4 entry, `app_version` `003`, each `total_ms` equal to the sum of its `turns_ms`, and `global_ms` equal to the sum of the totals. | F3, F7, R-EXP-2 |
-| AT-12 | Green ×3, then gray, yellow and blue taps. | Green shows P3, P1, P2 with their totals in the big digits. The other taps change nothing. | F3, F11 |
+| AT-12 | Green ×3, then gray and blue taps. | Green shows P3, P1, P2 with their totals in the big digits. The other taps change nothing. | F3, F11 |
+| AT-12U | Yellow. | *(004)* With a Bottlenose running sketch 1.3: the line goes from `Saving to the WiFi module...` to `Uploaded to root-metrics`, and the game is on the root-metrics page. Without one: `No WiFi module answering`, and the result stays on the board (yellow retries). | F18 |
 | AT-13 | Hold blue 2 s. | READY again. All clocks and averages are zero and the settings from AT-02..04 are kept (3 players). | F3 |
 | AT-14 | Red (start), then tap red quickly. | The game pauses. The LED bar flickers one red pixel and restores. The board stays on. | F13 |
 | AT-15 | Hold red 6 s. | The LED-bar countdown fills and the board powers off. Holding gray powers it back on, to READY with default settings (expected in the MVP). | F13 |

@@ -64,7 +64,7 @@ static void test_button_map(void) {
         { RC_STATE_SETTINGS, RC_BTN_RED,    RC_ACT_MENU_DOWN,     RC_NO_SEAT, false },
 
         { RC_STATE_OVER,     RC_BTN_GRAY,   RC_ACT_NONE,          RC_NO_SEAT, false },
-        { RC_STATE_OVER,     RC_BTN_YELLOW, RC_ACT_NONE,          RC_NO_SEAT, false },
+        { RC_STATE_OVER,     RC_BTN_YELLOW, RC_ACT_SEND,          RC_NO_SEAT, false },
         { RC_STATE_OVER,     RC_BTN_GREEN,  RC_ACT_VIEW_NEXT,     RC_NO_SEAT, false },
         { RC_STATE_OVER,     RC_BTN_BLUE,   RC_ACT_NONE,          RC_NO_SEAT, true  },
         { RC_STATE_OVER,     RC_BTN_RED,    RC_ACT_NONE,          RC_NO_SEAT, false },

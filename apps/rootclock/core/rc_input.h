@@ -8,7 +8,8 @@
  *   RUNNING   -         -              NEXT       -               PAUSE
  *   PAUSED    -         OPEN_SETTINGS  VIEW_NEXT  hold: END_GAME  RESUME
  *   SETTINGS  MENU_UP   MENU_PREV      MENU_DONE  MENU_NEXT       MENU_DOWN
- *   OVER      -         -              VIEW_NEXT  hold: NEW_GAME  -
+ *   OVER      -         SEND           VIEW_NEXT  hold: NEW_GAME  -
+ *   (SEND since 004: upload the finished game through the WiFi module)
  *
  * Rules:
  *   - Taps act on the PRESS edge (b.pressed), not on release.

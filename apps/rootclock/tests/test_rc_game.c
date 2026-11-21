@@ -88,7 +88,8 @@ static bool is_valid(const rc_game_t *g, rc_action_t a) {
                a.kind == RC_ACT_MENU_DONE;
     case RC_STATE_OVER:
         return (a.kind == RC_ACT_VIEW && a.seat < RC_SEATS) ||
-               a.kind == RC_ACT_NEW_GAME || a.kind == RC_ACT_VIEW_NEXT;
+               a.kind == RC_ACT_NEW_GAME || a.kind == RC_ACT_VIEW_NEXT ||
+               a.kind == RC_ACT_SEND;
     default:
         return false;
     }
@@ -100,7 +101,7 @@ static void test_ignored_actions(void) {
     unsigned checked = 0u;
 
     for (int sit = 0; sit < SIT_COUNT; sit++) {
-        for (int kind = RC_ACT_NONE; kind <= RC_ACT_VIEW; kind++) {
+        for (int kind = RC_ACT_NONE; kind <= RC_ACT_SEND; kind++) {
             for (unsigned si = 0u; si < sizeof seats; si++) {
                 uint32_t t = make_sit(&g, (sit_t)sit);
                 rc_action_t a = rc_t_act_seat((rc_action_kind_t)kind, seats[si]);
@@ -693,7 +694,18 @@ static void test_random_play(void) {
            "%u truncated logs\n", games_over, new_games, beeps, truncations);
 }
 
+/* SEND (yellow in OVER, 004) asks for the upload and changes nothing. */
+static void test_send(void) {
+    static rc_game_t g, before;
+    uint32_t t = make_sit(&g, SIT_OVER);
+    memcpy(&before, &g, sizeof g);
+    ASSERT_EQ(rc_game_apply(&g, rc_t_act_seat(RC_ACT_SEND, RC_NO_SEAT), t + 10u),
+              RC_EVT_SEND);
+    ASSERT_TRUE(memcmp(&before, &g, sizeof g) == 0);
+}
+
 int main(void) {
+    test_send();
     test_ignored_actions();
     test_transitions();
     test_acceptance_script();

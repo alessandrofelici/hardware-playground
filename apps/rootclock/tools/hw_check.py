@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """rootclock hardware acceptance check -- runs documents/02 AT-01..AT-14 on a board.
 
+(004: AT-12U, the upload through the Bottlenose WiFi module. With no
+Bottlenose it checks that the result stays on the display instead.)
+
 (002: one green "next" button, a PLAYERS setting and average turn times.)
 
 Drives the display CPU's test console (see apps/rootclock/display/main.c) over
@@ -43,7 +46,7 @@ BAUD = 115200                 # NEVER 1200
 TOL_MS = 300
 TAP_SETTLE_S = 0.25           # 100 ms injected tap + 5 ms debounce + margin
 RED_HOLD_LIMIT_MS = 1000
-APP_VERSION = "003"           # VERSION in apps/rootclock/CMakeLists.txt
+APP_VERSION = "004"           # VERSION in apps/rootclock/CMakeLists.txt
 
 NICKS = ["Jacob", "Alex", "Ahmed", "Lorenzo"]
 FACTION_KEYS = ["marquise", "eyrie", "woodland", "vagabond", "riverfolk", "cult",
@@ -377,17 +380,41 @@ def run(b):
             p2 = r["players"][1]["turns_ms"][0] if len(r["players"]) > 1 else 0
             c.ok(p2 > 30000, f"P2's first turn ({p2} ms) is past the 0:30 limit")
 
-    c.at("AT-12 green cycles the final cards; other taps change nothing")
+    c.at("AT-12 green cycles the final cards; gray and blue taps change nothing")
     seen = []
     for _ in range(3):
         b.press("green")
         seen.append(b.state()["viewed"])
     c.ok(seen == [2, 0, 1], f"green: P3, P1, P2 ({seen})")
-    for btn in ("gray", "yellow", "blue"):
+    for btn in ("gray", "blue"):
         b.press(btn)
     s = c.snapshot(b.state())
-    c.ok(s["state"] == "OVER" and s["viewed"] == 1, "gray/yellow/blue taps: still OVER on P2")
+    c.ok(s["state"] == "OVER" and s["viewed"] == 1, "gray/blue taps: still OVER on P2")
     c.ok(s["totals"][3] == 0, "P4 never played: total 0")
+
+    c.at("AT-12U upload: yellow hands the result to the WiFi module (004)")
+    u = s["uplink"]
+    c.ok(u["outbox"] == 1, "the finished game waits in the outbox")
+    b.press("yellow")
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        u = b.state()["uplink"]
+        if u["outbox"] == 0 or u["send"] == "failed":
+            break
+        time.sleep(0.25)
+    print(f"  uplink: {u}")
+    if u["c6"]:
+        c.ok(u["outbox"] == 0 and u["res"] in ("saved", "delivered"),
+             f"the WiFi module saved it (res {u['res']})")
+        deadline = time.monotonic() + 20.0
+        while u["res"] != "delivered" and time.monotonic() < deadline:
+            time.sleep(0.5)
+            u = b.state()["uplink"]
+        c.ok(u["res"] == "delivered" and u["http"] in (200, 201),
+             f"root-metrics has it (res {u['res']}, http {u['http']}, wifi {u['wifi']})")
+    else:
+        c.ok(u["send"] == "failed" and u["outbox"] == 1,
+             "no WiFi module answering: the result stays on the display")
 
     c.at("AT-13 hold blue 2 s -> new game, settings kept")
     b.hold("blue", 2500)
@@ -395,6 +422,8 @@ def run(b):
     c.ok(s["state"] == "READY", "READY")
     c.ok(s["totals"] == [0, 0, 0, 0] and s["turns"] == [0, 0, 0, 0], "clocks and turns reset")
     c.ok(s["avg"] == [-1, -1, -1, -1], "averages reset")
+    c.ok(s["uplink"]["outbox"] == u["outbox"],
+         "a new game keeps any result not yet handed over")
     c.ok(s["limit_ms"] == 30000 and s["players"] == 3 and s["nick"][0] == 1
          and s["fac"][1] == 5, "settings kept (3 players, 0:30, P1 Alex, P2 Lizard Cult)")
 

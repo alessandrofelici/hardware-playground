@@ -10,6 +10,14 @@
 #   SIM_PTY=/tmp/rootclock-tty build/rootclock-sim/rootclock_sim &
 #   python3 apps/rootclock/tools/hw_check.py --port /tmp/rootclock-tty
 #
+# The main CPU's relay (main/bridge.c) runs inside the simulator too, joined
+# to the display by the BSP's real link framing. With SIM_C6="<command>" it
+# talks to that command's stdin/stdout as the ESP32-C6 -- fake_c6.py plays the
+# Bottlenose sketch and can upload to a real root-metrics:
+#   SIM_C6="python3 apps/rootclock/tools/sim/fake_c6.py --url \
+#           http://127.0.0.1:8080/api/results --token dev" rootclock_sim
+# Without SIM_C6 there is no WiFi module, as on a board with no Bottlenose.
+#
 # Linux/macOS only (posix_openpt, CLOCK_MONOTONIC). Standalone like tests/:
 # the firmware build never adds this directory. What it cannot show: the
 # panel's real colours and timing, the beep, the LED bar, power-off.
@@ -28,6 +36,8 @@ endif()
 # The BSP's pure halves, exactly as its own host tests build them.
 add_library(sim_bsp_pure STATIC
     ${BSP}/display_cpu/lcd/lcd_text.c
+    ${BSP}/common/crc.c
+    ${BSP}/common/link/link_frame.c
     ${CMAKE_CURRENT_SOURCE_DIR}/sim_buttons.c
     ${BSP}/display_cpu/input/buttons.c)
 target_include_directories(sim_bsp_pure PRIVATE ${BSP}/display_cpu ${BSP})
@@ -49,14 +59,20 @@ add_executable(rootclock_sim
     ${RC}/core/rc_result.c
     ${RC}/core/rc_format.c
     ${RC}/core/rc_battery.c
+    ${RC}/core/rc_uplink.c
     ${RC}/display/battery.c
+    ${RC}/display/export.c
+    ${RC}/main/bridge.c
     sim_bsp.c
-    sim_hooks.c
+    sim_link.c
     sim_beeper.c)
 # include/ first: it shadows fwog_display.h and the SDK headers.
 target_include_directories(rootclock_sim PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${BSP}
+    ${RC}/common
+    ${RC}/main
     ${RC}/core
     ${RC}/display
     ${RC}/display/assets)
