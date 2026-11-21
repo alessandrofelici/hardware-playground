@@ -9,7 +9,7 @@
 #define WIFI_SSID "your-network-name"
 #define WIFI_PASS "your-password"
 
-// rootclock uploads (sketch 1.3+). Where finished games go: root-metrics'
+// rootclock uploads (sketch 1.4+). Where finished games go: root-metrics'
 // POST /api/results, and the INGEST_TOKEN set on that server. Leave
 // RESULTS_URL out to turn uploads off (the board then says so).
 //   Hosted on Vercel:  "https://<your-app>.vercel.app/api/results"

@@ -107,7 +107,7 @@ and `!verbose` also shows the once-a-second `TIME` lines.
 
 ## Uploading rootclock games
 
-Sketch 1.3 takes finished games from rootclock's main CPU (`RESULT BEGIN / DATA / END`
+Sketch 1.4 takes finished games from rootclock's main CPU (`RESULT BEGIN / DATA / END`
 lines, with a length and CRC check), saves each one to the C6's flash and POSTs it to
 root-metrics until the server has it. In `secrets.h`:
 

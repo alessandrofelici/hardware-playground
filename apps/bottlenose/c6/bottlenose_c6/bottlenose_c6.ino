@@ -68,7 +68,7 @@
 #error "Set Tools > USB CDC On Boot > Enabled, so Serial is the USB port and Serial0 is the FreeWili link."
 #endif
 
-static const char *FW_VERSION = "1.3";
+static const char *FW_VERSION = "1.4";
 // POSIX TZ string. "UTC0" is UTC; for example Central Europe is
 // "CET-1CEST,M3.5.0,M10.5.0/3" and US Eastern is "EST5EDT,M3.2.0,M11.1.0".
 static const char *TZ_INFO = "UTC0";
@@ -627,13 +627,18 @@ void loop() {
     do_fetch();
   }
   s_was_up = up;
+  // `now` was read before poll_cmds(), and the commands it ran may have
+  // stamped s_join_started or s_rx.last_ms with a later millis(). Compare
+  // signed: an unsigned `now - later` wraps to ~4e9 and reads as "expired",
+  // which threw away every RESULT whose lines took a millisecond to arrive.
+
   // Auto-reconnect does not retry every failure, so start over if a join
   // has been going nowhere for a while. (join() sends "connecting"; if the
   // network still is not there, the next reason follows within seconds.)
-  if (!up && !s_radio_off && now - s_join_started >= REJOIN_AFTER_MS) join();
+  if (!up && !s_radio_off && (int32_t)(now - s_join_started) >= (int32_t)REJOIN_AFTER_MS) join();
 
   // A result whose END never came (the FreeWili reset mid-way): forget it.
-  if (s_rx.active && now - s_rx.last_ms >= RX_STALE_MS) s_rx.active = false;
+  if (s_rx.active && (int32_t)(now - s_rx.last_ms) >= (int32_t)RX_STALE_MS) s_rx.active = false;
 
   // Uploads, then WIFI OFF once there is nothing left to send.
   upload_tick(now, up);
