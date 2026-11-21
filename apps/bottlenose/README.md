@@ -125,9 +125,11 @@ root-metrics until the server has it. In `secrets.h`:
   both keep a data partition. Changing the scheme moves that partition, so games still waiting
   on the C6 are lost; upload them first.
 - **Checked so far.** Compiled with arduino-cli and the esp32 core 4.0.0 (*ESP32C6 Dev
-  Module*, *USB CDC On Boot: Enabled*), no warnings from the sketch, also with *Huge APP*.
-  Not yet run on a C6: the protocol side was exercised against `apps/rootclock/tools/sim/
-  fake_c6.py`, which mirrors it.
+  Module*, *USB CDC On Boot: Enabled*), no warnings from the sketch, also with *Huge APP*;
+  with core 3.3.13 it is 92% of the default scheme. On a C6 (2026-11-21): 1.4 receives,
+  checks and saves the games rootclock sends over the header, and keeps them through a
+  reflash. 1.3 dropped every one (fixed in 1.4). The bottlenose app works with 1.4. The
+  C6's HTTPS POST to root-metrics has not run yet: there was no 2.4 GHz network for it.
 - **HTTPS.** The sketch checks the server's certificate against `root_cas.h` (Google Trust
   Services for `*.vercel.app`, Let's Encrypt for most custom domains), after syncing the clock
   over NTP. `#define RESULTS_TLS_INSECURE 1` skips the check while testing another server.
